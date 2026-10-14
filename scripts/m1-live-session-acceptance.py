@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import tempfile
 import time
@@ -86,6 +87,8 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
     browser_result: dict[str, object] | None = None
     terminal: dict[str, object] | None = None
     started_at = utc_now()
+    browser_ready_path = state_parent / "browser-ready.json"
+    browser_attached_at: str | None = None
     try:
         assert world_process.stdout is not None
         for line in world_process.stdout:
@@ -95,6 +98,10 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
             record["observed_at_utc"] = utc_now()
             world_events.append(record)
             if record.get("event") == "ready":
+                # Synchronize only this newly created test child at the
+                # ready boundary so Chrome is connected before cycle 1.
+                # This is test scheduling, not a runtime control contract.
+                world_process.send_signal(signal.SIGSTOP)
                 bridge_url = str(record.get("observation_bridge", "")) + "/v1/current"
                 request = urllib.request.Request(bridge_url, headers={"Origin": "http://attacker.invalid"})
                 try:
@@ -111,11 +118,21 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
                     "FRONTEND_BRIDGE_URL": bridge_url,
                     "FRONTEND_ORIGIN": frontend_origin,
                     "CHROME_BIN": chrome_bin,
+                    "BROWSER_READY_PATH": str(browser_ready_path),
                 }
                 browser_process = subprocess.Popen(
                     ["node", str(frontend / "scripts/acceptance-live-browser.mjs")],
                     cwd=frontend, env=browser_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 )
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline and not browser_ready_path.is_file():
+                    if browser_process.poll() is not None:
+                        raise RuntimeError("Browser exited before attaching to the live bridge")
+                    time.sleep(0.05)
+                if not browser_ready_path.is_file():
+                    raise RuntimeError("Real browser did not attach to the live bridge before timeout")
+                browser_attached_at = json.loads(browser_ready_path.read_text(encoding="utf-8"))["browser_attached_at_utc"]
+                world_process.send_signal(signal.SIGCONT)
             if record.get("event") == "cycle_committed":
                 tick = record.get("last_verified_committed_tick")
                 if not isinstance(tick, int):
@@ -141,6 +158,7 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
             browser_process.terminate()
             browser_process.wait(timeout=10)
         if world_process.poll() is None:
+            world_process.send_signal(signal.SIGCONT)
             world_process.terminate()
             world_process.wait(timeout=10)
 
@@ -160,7 +178,7 @@ if source_revisions.get("observation") != expected_observation_sha:
 if terminal.get("last_verified_committed_tick") != 3:
     raise RuntimeError(f"Expected 3 committed cycles for bounded live check, got {terminal}")
 
-attached_at = datetime.fromisoformat(str(browser_result["browser_attached_at_utc"]).replace("Z", "+00:00"))
+attached_at = datetime.fromisoformat(str(browser_attached_at).replace("Z", "+00:00"))
 snapshots = browser_result.get("snapshots")
 if not isinstance(snapshots, list):
     raise RuntimeError("Browser result omitted rendered current-view snapshots")
@@ -215,6 +233,8 @@ report = {
         for event in world_events if event.get("event") == "cycle_committed"
     ],
     "browser": browser_result,
+    "browser_attached_at_utc": browser_attached_at,
+    "test_synchronization": "World child paused only at ready until real Chrome completed its initial loopback read; then resumed before cycle 1.",
     "unavailable_browser": unavailable_result,
     "browser_observed_commits_while_attached": live_ticks,
     "terminal": terminal,

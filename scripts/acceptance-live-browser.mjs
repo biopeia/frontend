@@ -1,9 +1,8 @@
 import {spawn} from 'node:child_process';
-import {mkdtemp, mkdir, readFile, rm} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {createHash} from 'node:crypto';
-import {writeFile} from 'node:fs/promises';
 import {once} from 'node:events';
 import {createFrontendServer} from './frontend-server.js';
 
@@ -30,7 +29,7 @@ try {
     '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
     '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0',
     '--remote-allow-origins=*', `--user-data-dir=${profile}`, 'about:blank',
-  ], {stdio: 'ignore'});
+  ], {stdio: 'ignore', detached: true});
   const activePortPath = join(profile, 'DevToolsActivePort');
   let port;
   for (let i = 0; i < 100; i += 1) {
@@ -86,6 +85,9 @@ try {
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   if (!connectedAt) throw new Error('Browser did not connect to the live current-view bridge');
+  if (process.env.BROWSER_READY_PATH) {
+    await writeFile(process.env.BROWSER_READY_PATH, JSON.stringify({browser_attached_at_utc: connectedAt}), {flag: 'wx'});
+  }
 
   const snapshots = [];
   const polls = [];
@@ -148,8 +150,11 @@ try {
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));
 } finally {
   socket?.close();
-  if (browser && browser.exitCode === null) browser.kill('SIGTERM');
+  if (browser && browser.exitCode === null) {
+    try { process.kill(-browser.pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    await once(browser, 'exit').catch(() => {});
+  }
   frontend.close();
   await once(frontend, 'close').catch(() => {});
-  await rm(profile, {recursive: true, force: true});
+  await rm(profile, {recursive: true, force: true, maxRetries: 10, retryDelay: 100});
 }
