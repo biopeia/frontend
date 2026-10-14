@@ -63,3 +63,33 @@ The automated browser run verifies:
 The runner emits a machine-readable `M1_ACCEPTANCE_RESULT` record with the exact source SHAs, World identity/tick/commit, Observation delivery sequences, browser version, request list and outcome. Record that output in the linked Frontend issue or PR for each exact candidate run; a run from an uncommitted or dirty checkout is not candidate evidence.
 
 This acceptance job covers one bounded, local, single-process current-view run. It does not demonstrate remote access, durable history, deployment, persistence across restart, atomic cross-owner snapshots, scientific efficacy, or normal resolution through the World package lock. Any source revision change requires rerunning the job and recording the new exact revisions and result.
+
+## Live multi-cycle acceptance (Frontend #16)
+
+`npm run acceptance:m1:live` is the live-session acceptance path. Unlike the historical one-cycle harness above, it launches the merged World `world-m1` process from an explicit operator profile with `--cycles 3`, waits for its actual `ready` event, and opens one real Chrome page against the process's loopback Observation bridge. That page remains attached while it refreshes the fixed current-view route. The runner correlates the World JSONL `cycle_committed` events with two distinct World ticks and source-lineage digests actually rendered in the browser, and requires at least two of those commits to occur after browser attachment and then appear in a subsequent browser read.
+
+The browser check retains the approved family allowlist, provenance/context display, GET-only same-origin reads, foreign-Origin denial, console-error/warning checks and a captured screenshot digest. It also runs the existing separate real-browser unavailable-state check against an explicitly refused loopback endpoint; that tests truthful unavailability and does not infer source absence. World is the authority for committed cut identity; Frontend observes claim context and lineage without creating a cross-owner causal join.
+
+### Reproduction
+
+Use clean Frontend and World worktrees, an existing local clone for each pinned dependency, Node.js 22+, Python from the World runtime environment and a local Chrome binary. `WORLD_M1_BIN` must be the executable installed from the exact World checkout in `WORLD_REPO`. `WORLD_PROFILE` must be the explicit M1 profile inside that checkout, and every dependency pin is checked both against World's `pyproject.toml` and the process JSONL `source_revisions` before the report can pass.
+
+```sh
+WORLD_REPO=/path/to/clean/world-worktree \
+WORLD_SHA="$(git -C /path/to/clean/world-worktree rev-parse HEAD)" \
+WORLD_M1_BIN=/path/to/clean/world-worktree/.venv/bin/world-m1 \
+WORLD_PROFILE=/path/to/clean/world-worktree/profiles/m1/scalar-sensorimotor-mujoco-3.15-v1.json \
+WORLD_PYTHON=/path/to/clean/world-worktree/.venv/bin/python \
+ORGANISM_REPO=/path/to/organism-clone \
+EMBODIMENT_REPO=/path/to/embodiment-clone \
+ENVIRONMENT_REPO=/path/to/environment-clone \
+MODALITY_REPO=/path/to/modality-clone \
+OBSERVATION_REPO=/path/to/observation-clone \
+OBSERVATION_SHA=a0d3f61540ba9589edfdb5b3cdd6bf3935afd7d1 \
+CHROME_BIN=/usr/bin/google-chrome \
+npm run acceptance:m1:live
+```
+
+The corresponding machine-readable stdout record is `M1_LIVE_ACCEPTANCE_RESULT=...`. It includes exact Frontend and World SHAs, the World process's actually verified Organism, Embodiment, Environment, Modality and Observation revisions, profile digest, each actual World commit/tick, ticks observed after browser attachment, browser version, same-origin read requests, screenshot SHA-256 and bounded limitations. The accepted World lock currently pins Observation `a0d3f61540ba9589edfdb5b3cdd6bf3935afd7d1`; do not substitute Observation `main` unless the World lock and executable are intentionally advanced and revalidated.
+
+This is a three-cycle local smoke acceptance only. It demonstrates no tolerance, safety or performance guarantee at 24 or more cycles; no history, remote/public service, scientific efficacy, restore/continuity, or atomic cross-owner snapshot.

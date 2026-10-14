@@ -9,6 +9,7 @@
     "build": "node scripts/build.js",
     "preview": "node scripts/serve.js dist",
     "acceptance:m1": "node scripts/acceptance-m1.mjs",
+    "acceptance:m1:live": "node scripts/acceptance-live-m1.mjs",
     "test": "node --test tests/*.test.js",
     "check": "npm run test && npm run build"
   }
