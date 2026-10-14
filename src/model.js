@@ -27,5 +27,5 @@ export function assertReadOnlySource(source) {
   if (source.status === 'not-configured' && (source.claims.length || source.cut)) throw Error('Configured data without source');
   return source;
 }
-export function routeFromPath(path) { return ROUTES.find(route => route.path === path) ?? ROUTES[1]; }
+export function routeFromPath(path) { return ROUTES.find(route => route.path === path) ?? ROUTES[0]; }
 export function sourceRef(value) { return value === null || value === undefined || value === '' ? 'Not available' : String(value); }
