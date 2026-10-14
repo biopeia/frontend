@@ -18,6 +18,10 @@ const originUrl = new URL(expectedOrigin);
 if (originUrl.protocol !== 'http:' || originUrl.hostname !== '127.0.0.1' || !originUrl.port) {
   throw new Error('Frontend acceptance origin must be an explicit 127.0.0.1 HTTP origin');
 }
+const isSameOriginRequest = request => {
+  try { return new URL(request.url).origin === expectedOrigin; }
+  catch { return false; }
+};
 
 const browserProfile = process.env.FRONTEND_BROWSER_PROFILE || await mkdtemp(join(tmpdir(), 'biopeia-chrome-'));
 await mkdir(browserProfile, {recursive: true});
@@ -111,7 +115,7 @@ try {
     if (apiReads.length !== 2 || apiReads.some(request => request.method !== 'GET')) {
       throw new Error(`Unavailable-state browser should make exactly two bounded GET reads, observed ${JSON.stringify(apiReads)}`);
     }
-    if (requests.some(request => !request.url.startsWith(expectedOrigin))) {
+    if (requests.some(request => !isSameOriginRequest(request))) {
       throw new Error(`Browser contacted a non-same-origin source: ${JSON.stringify(requests)}`);
     }
     console.log('M1_BROWSER_RESULT=' + JSON.stringify({
@@ -153,7 +157,7 @@ try {
   if (apiReads.length !== 2 || apiReads.some(request => request.method !== 'GET')) {
     throw new Error(`Expected exactly two bounded GET reads, observed ${JSON.stringify(apiReads)}`);
   }
-  const unexpectedNetwork = requests.filter(request => !request.url.startsWith(expectedOrigin));
+  const unexpectedNetwork = requests.filter(request => !isSameOriginRequest(request));
   if (unexpectedNetwork.length) throw new Error(`Browser contacted a non-same-origin source: ${JSON.stringify(unexpectedNetwork)}`);
   const result = {
     status: 'PASS',
