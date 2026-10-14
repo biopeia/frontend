@@ -127,7 +127,8 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
                 deadline = time.monotonic() + 15
                 while time.monotonic() < deadline and not browser_ready_path.is_file():
                     if browser_process.poll() is not None:
-                        raise RuntimeError("Browser exited before attaching to the live bridge")
+                        out, err = browser_process.communicate()
+                        raise RuntimeError(f"Browser exited before attaching to the live bridge ({browser_process.returncode}):\n{out}\n{err}")
                     time.sleep(0.05)
                 if not browser_ready_path.is_file():
                     raise RuntimeError("Real browser did not attach to the live bridge before timeout")
