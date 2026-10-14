@@ -10,5 +10,6 @@ await writeFile(join(out,'assets/main.js'),main);
 await copyFile('src/model.js',join(out,'assets/model.js'));
 await copyFile('src/views.js',join(out,'assets/views.js'));
 await copyFile('src/observation-client.js',join(out,'assets/observation-client.js'));
+await copyFile('src/snapshot-refresh.js',join(out,'assets/snapshot-refresh.js'));
 await copyFile('src/style.css',join(out,'assets/style.css'));
 console.log('Built static read-only shell to dist/');
