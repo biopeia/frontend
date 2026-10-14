@@ -1,26 +1,29 @@
-# Browser Observation adapter — readiness contract v0
+# Browser Observation adapter — readiness record v0
 
-**Lifecycle:** PROPOSED, not ratified. **Owner:** Frontend, with Observation and competent security/operations review.  
-**Work item:** [Frontend #4](https://github.com/biopeia/frontend/issues/4).  
-**Canonical design:** [Biopeia frontend v1](https://github.com/biopeia/docs/blob/main/technical/design/frontend/biopeia-frontend-v1.md), UX and visual specifications, readiness plan, accepted ADR-0113.  
-**Implementation authorization:** NOT GRANTED. This document is a boundary/readiness specification, not an API design approval, deployment plan or adapter implementation.
+**Status:** The bounded local M1 read profile is accepted and its implementation is merged. Broader Frontend v1 readiness remains incomplete.
+**Owner:** Frontend, with Observation and competent security/operations review.
+**Work item:** [Frontend #4](https://github.com/biopeia/frontend/issues/4).
+**Canonical design:** [Biopeia frontend v1](https://github.com/biopeia/docs/blob/main/technical/design/frontend/biopeia-frontend-v1.md), UX and visual specifications, readiness plan, accepted ADR-0113.
+**Scope of approval:** local, single-user, same-origin, read-only access to the bounded current view of two approved claim families only. This is not approval for shared or production deployment, history, persistence, remote access, additional claim families, or runtime control.
+**Owner dispositions:** [Observation #37](https://github.com/biopeia/observation/issues/37#issuecomment-6176059137), [Docs #167](https://github.com/biopeia/docs/issues/167#issuecomment-6175690251), and [Frontend #4](https://github.com/biopeia/frontend/issues/4#issuecomment-6175690850). These approvals do not substitute for independent review or security/operations evidence.
 
 ## 1. Scope and non-authority
 
 Frontend may only present **owner-authorized, explicitly attributable Observation publications** through a separately approved, browser-safe, read-only access boundary. Frontend owns presentation state (selection, camera, filters, display cursor), never World causal state, an Organism's beliefs, Lab evidence, or Observation source semantics. It may not issue commands, use a domain's private checkpoint, infer joins or produce operational observations.
 
-The existing in-process ObservationPlane `current_messages()` and `open_stream()` contract approved for Lab #332/#40 is **not** a browser-access or security contract. Do not expose that in-process plane over HTTP or WebSockets by convenience, or assume durable replay.
+The in-process ObservationPlane `current_messages()` and `open_stream()` contract approved for Lab #332/#40 is **not by itself** a browser-access or security contract. The separately accepted M1 path is an explicit, bounded local bridge and a same-origin Frontend proxy; it is not a general-purpose exposure of the Lab consumer API, and it does not provide durable replay.
 
 ## 2. Gates and accountable authorities
 
 | Gate | Required evidence | Authority | Status |
 |---|---|---|---|
 | Constitutional/frontend ownership | ADR-0113 and approved frontend design package | Architecture Owner | Accepted |
-| Current producer inventory and read API | Exact SHA, admitted families, claim semantics, access/query/replay limits, World-cut provenance | Observation Owner; World/producer owners for source claims | Open — Observation #37 |
-| Access and security profile | Deployment setting, authenticated principals, read scopes, origin/CORS/CSP, privacy, cache/retention, logging, incident handling, threat model | Competent security/operations owner | Open — Docs #167 |
-| Network/browser transport | Explicit response/query/stream API with bounds, pagination, validation, backpressure and stale semantics | Observation Owner, security/operations and Frontend consumer | Not proposed as an implementation |
-| Integrity and scientific separation | Independent adversarial review of the exact accepted contract and actual implementation slice | Relevant domain owners + BAW-004 | Open |
-| Delivery/release | Exact-SHA CI, fail-closed E2E negatives, accessible fallback, rollback/runbook | Frontend and operations owners | Blocked |
+| M1 producer inventory and read contract | Two admitted claim families, bounded-current scope, provenance and exclusions | Observation Owner; World/producer owners for source claims | Accepted for M1 — Observation #37 |
+| M1 local security profile | Loopback-only local single-user use, same origin, read only, no export or shared deployment | Project Owner; applicable operations/security review remains distinct | Accepted for M1 — Docs #167 |
+| M1 browser transport | Local Observation current-view bridge and same-origin Frontend proxy; bounded GET only | Observation, Frontend and Project Owner | Accepted and implemented — Frontend #4; Observation #45 and Frontend #8 merged |
+| Broader screen/family readiness | Catalogs, history, additional claims, geometry and cross-owner coherence | Relevant domain owners | Open — Observation #37; unsupported views remain unavailable |
+| Integrity and scientific separation | Independent review of the exact implementation candidate where required by BAW-004 | Relevant domain owners + independent reviewer | Separate review gate; owner approval does not satisfy it |
+| Delivery/release | End-to-end CI, accessibility, operational procedures and deployment | Frontend and operations owners | Incomplete; no deployment authorization |
 
 No gate is satisfied merely by the existence of a domain publication or a green build.
 
@@ -63,9 +66,24 @@ A future implementation must demonstrably: reject unexpected schemas and oversiz
 
 Tests require **a precisely pinned, authorized producer+Observation+Frontend integration set**, recorded source evidence, and independent BAW-004 review. Synthetic fixtures may test the UI only when obviously marked as synthetic and never presented as source evidence.
 
-## 7. Proposed next bounded work
+## 7. Implemented M1 boundary and remaining work
 
-1. Observation #37: domain owner publishes the exact family/access inventory and a concrete *read-only browser-consumer* contract decision.
-2. Docs #167: competent security/operations owner selects threat/deployment profile, including local development scope.
-3. Frontend #4: owner reviews this contract inventory and removes unsupported feature slices.
-4. Only after the gates, open a separate implementation issue/PR to add a transport adapter. Do not retrofit Lab's in-process surface.
+The following current revisions contain the merged M1 implementation:
+
+- Frontend `main`: `a16b76ce659d007478b675d7709af67a2116a88f`.
+- Observation `main`: `a0d3f61540ba9589edfdb5b3cdd6bf3935afd7d1`.
+- World `main`: `5252ebc13f6d73fdb178d0ebc1c9c69735911298`.
+
+The current frontend accepts only `biopeia.observation.current.v1`, and only displays the owner-authorized `embodiment.body_pose@v1` and `environment.finite_scalar_field@1` claims after validating their source identities, authority, provenance, units/frames, and available World-cut lineage. The in-process Observation view is volatile, bounded, and does not guarantee freshness or cross-owner snapshot coherence. The UI must preserve those limitations.
+
+The local path consists of the Observation-owned current-view bridge and a same-origin, GET-only Frontend proxy. The implementation rejects non-loopback Host values, unexpected browser Origin, unsupported methods/routes, and oversized responses; it does not grant access to a shared or external client. The local profile has no end-user authentication mechanism; its trust assumption is single-user access to the development machine and loopback services only.
+
+This merged M1 slice demonstrates local current-view presentation, not completion of the seven-screen product. The following remain unsupported or unproven: World/run catalogs, durable or arbitrary historical queries, general 3D geometry, sensorimotor/action links, additional domain claim families, cross-owner atomic snapshots, remote/shared deployment, persistent authorization, and scientific interpretation. Unsupported views must remain visibly unavailable rather than be populated with synthetic observations.
+
+### Remaining bounded work
+
+1. Complete the automated browser-to-World acceptance path and its exact-candidate independent adversarial review (Frontend #11 / PR #12; the PR is not merged in this record).
+2. Review and disposition bounded current-view refresh separately (Frontend #13 / PR #14); polling does not create a history or freshness guarantee.
+3. Complete accessibility acceptance, including successful screen-reader and native 200% zoom checks, plus a full rendered contrast review (Frontend #3).
+4. Keep the remaining screen/family inventory current under Observation #37. Any new claim family, history, persistence, access mode, or deployment requires its own domain/operational contract and authorization.
+5. Do not infer production readiness or deployment permission from merged local code, CI success, or a browser smoke test.
