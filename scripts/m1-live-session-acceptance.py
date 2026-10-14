@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import tempfile
 import time
@@ -76,6 +77,26 @@ profile_sha = hashlib.sha256(profile_path.read_bytes()).hexdigest()
 with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
     state_parent = Path(temporary)
     state_root = state_parent / "world-state"
+    chrome_profile = state_parent / "chrome-profile"
+    chrome_profile.mkdir()
+    chrome_process = subprocess.Popen(
+        [chrome_bin, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+         "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0",
+         "--remote-allow-origins=*", f"--user-data-dir={chrome_profile}", "about:blank"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+    )
+    active_port_path = chrome_profile / "DevToolsActivePort"
+    chrome_port = None
+    for _ in range(100):
+        if chrome_process.poll() is not None:
+            raise RuntimeError(f"Prestarted Chrome exited early: {chrome_process.returncode}")
+        try:
+            chrome_port = active_port_path.read_text(encoding="utf-8").splitlines()[0]
+            break
+        except (FileNotFoundError, IndexError):
+            time.sleep(0.05)
+    if not chrome_port:
+        raise RuntimeError("Prestarted Chrome did not publish its DevTools endpoint")
     command = [str(bridge_bin), "--profile", str(profile_path), "--state-root", str(state_root), "--cycles", "20"]
     world_process = subprocess.Popen(command, cwd=world, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     world_events: list[dict[str, object]] = []
@@ -114,6 +135,7 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
                     "FRONTEND_ORIGIN": frontend_origin,
                     "CHROME_BIN": chrome_bin,
                     "BROWSER_READY_PATH": str(browser_ready_path),
+                    "CHROME_CDP_URL": f"http://127.0.0.1:{chrome_port}",
                 }
                 browser_process = subprocess.Popen(
                     ["node", str(frontend / "scripts/acceptance-live-browser.mjs")],
@@ -155,6 +177,9 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
         if world_process.poll() is None:
             world_process.terminate()
             world_process.wait(timeout=10)
+        if chrome_process.poll() is None:
+            os.killpg(chrome_process.pid, signal.SIGTERM)
+            chrome_process.wait(timeout=10)
 
 if browser_result is None or terminal is None:
     raise RuntimeError("Acceptance result was incomplete")

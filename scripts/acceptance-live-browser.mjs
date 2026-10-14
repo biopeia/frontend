@@ -25,23 +25,29 @@ await once(frontend, 'listening');
 let browser;
 let socket;
 try {
-  browser = spawn(chromeBin, [
+  const cdpUrl = process.env.CHROME_CDP_URL;
+  let port;
+  if (cdpUrl) {
+    port = new URL(cdpUrl).port;
+  } else {
+    browser = spawn(chromeBin, [
     '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
     '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0',
     '--remote-allow-origins=*', `--user-data-dir=${profile}`, 'about:blank',
-  ], {stdio: 'ignore', detached: true});
-  const activePortPath = join(profile, 'DevToolsActivePort');
-  let port;
-  for (let i = 0; i < 100; i += 1) {
-    if (browser.exitCode !== null) throw new Error(`Chrome exited early: ${browser.exitCode}`);
-    try { port = (await readFile(activePortPath, 'utf8')).split('\n')[0].trim(); break; }
-    catch { await new Promise(resolve => setTimeout(resolve, 50)); }
+    ], {stdio: 'ignore', detached: true});
+    const activePortPath = join(profile, 'DevToolsActivePort');
+    for (let i = 0; i < 100; i += 1) {
+      if (browser.exitCode !== null) throw new Error(`Chrome exited early: ${browser.exitCode}`);
+      try { port = (await readFile(activePortPath, 'utf8')).split('\n')[0].trim(); break; }
+      catch { await new Promise(resolve => setTimeout(resolve, 50)); }
+    }
   }
   if (!port) throw new Error('Chrome did not publish its DevTools endpoint');
-  const versionResponse = await fetch(`http://127.0.0.1:${port}/json/version`);
+  const devtoolsBase = cdpUrl || `http://127.0.0.1:${port}`;
+  const versionResponse = await fetch(`${devtoolsBase}/json/version`);
   if (!versionResponse.ok) throw new Error(`Chrome version endpoint returned ${versionResponse.status}`);
   const version = await versionResponse.json();
-  const targetResponse = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(origin + '/overview')}`, {method: 'PUT'});
+  const targetResponse = await fetch(`${devtoolsBase}/json/new?${encodeURIComponent(origin + '/overview')}`, {method: 'PUT'});
   if (!targetResponse.ok) throw new Error(`Chrome could not create target: ${targetResponse.status}`);
   const target = await targetResponse.json();
   socket = new WebSocket(target.webSocketDebuggerUrl);
