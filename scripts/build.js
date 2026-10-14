@@ -1,0 +1,15 @@
+import {mkdir,readFile,writeFile,copyFile} from 'node:fs/promises';
+import {join} from 'node:path';
+const out='dist';await mkdir(join(out,'assets'),{recursive:true});
+let html=await readFile('index.html','utf8');
+html=html.replace('<script type="module" src="/src/main.js"></script>','<script type="module" src="/assets/main.js"></script>');
+await writeFile(join(out,'index.html'),html);
+let main=await readFile('src/main.js','utf8');
+main=main.replace("import './style.css';",'').replace("from './model.js'","from './model.js'");
+await writeFile(join(out,'assets/main.js'),main);
+await copyFile('src/model.js',join(out,'assets/model.js'));
+await copyFile('src/style.css',join(out,'assets/style.css'));
+main=await readFile(join(out,'assets/main.js'),'utf8');
+main="import './style.css';\n"+main.replace("from './model.js'","from './model.js'");
+await writeFile(join(out,'assets/main.js'),main);
+console.log('Built static read-only shell to dist/');
