@@ -1,20 +1,103 @@
-// Biopeia v1: seven evidence-first views. Presentation-only; no source adapter.
-const panel=(title,body,tag='UNAVAILABLE')=>`<section class="panel"><div class="panel-heading"><h2>${title}</h2><span class="small-tag">${tag}</span></div><div class="panel-body">${body}</div></section>`;
-const item=(label,value='Not available')=>`<div class="property"><span>${label}</span><strong>${value}</strong></div>`;
-const note=(title,description,kind='unknown')=>`<div class="empty-detail" role="status"><span class="state-pill">${kind.toUpperCase()}</span><h3>${title}</h3><p>${description}</p><p class="fine">This limitation describes available publications, not the existence or activity of source state.</p></div>`;
-const link=(route,text)=>`<a class="text-link" href="${route}" data-nav>${text} →</a>`;
-const guide=(steps)=>`<ol class="guidance">${steps.map(s=>`<li>${s}</li>`).join('')}</ol>`;
-const table=(headers,empty)=>`<div class="table-scroll"><table><thead><tr>${headers.map(h=>`<th scope="col">${h}</th>`).join('')}</tr></thead><tbody><tr><td colspan="${headers.length}" class="table-empty">${empty}</td></tr></tbody></table></div>`;
-const spatial=(heading)=>`<div class="spatial-surface" role="img" aria-label="Spatial visualization unavailable because no compatible published geometry is connected"><div class="spatial-grid-art" aria-hidden="true"></div><div class="spatial-message"><div class="spatial-icon" aria-hidden="true">◇</div><span class="state-pill">UNSUPPORTED WITHOUT SOURCE</span><h3>${heading}</h3><p>Geometry, coordinate frame, units and checkpoint lineage must come from authorized publications. No synthetic scene is displayed.</p>${link('/connection','Inspect connection readiness')}</div></div>`;
-export function renderScreen(route){
- switch(route.path){
- case '/worlds': return `<div class="section-heading"><h2>Available observation contexts</h2><p>Discover Worlds and runs only through an approved source catalog.</p></div><div class="metric-grid">${panel('World catalog',item('Authorized Worlds')+item('Discovery contract','Not configured'),'NO SOURCE')}${panel('Run association',item('Selected run')+item('World association','Not verified'),'UNRESOLVED')}${panel('Coverage',item('Observed cuts')+item('Publication completeness','Unknown'),'UNKNOWN')}</div>${panel('Worlds & runs',table(['World identity','Run identity','Last committed cut','Delivery status'],'No authorized catalog is configured. No World or run absence is asserted.'),'NO DATA')}${panel('Getting started',guide(['A browser-safe Observation read contract must be approved.','Select a published World/run context using source-asserted identity.','Inspect publication limits before interpreting a cut.'])+link('/connection','Review connection & access'),'READ-ONLY')}`;
- case '/overview': return `<div class="overview-layout"><div>${panel('World spatial context',spatial('No source-backed world geometry'),'NO GEOMETRY')}${panel('Latest committed cut',note('No committed cut available','An authoritative World cut cannot be inferred from Observation delivery or browser time.'))}</div><div>${panel('Source integrity',item('World identity')+item('Commit identity')+item('Owner checkpoint references')+item('Published at')+item('Observed at'),'NOT VERIFIED')}${panel('Published domains',item('Environment')+item('Embodiment')+item('Organism')+item('Modality','No independent semantic authority'),'UNKNOWN')}${panel('Coverage and coherence',note('No global snapshot claim','Independent owner revisions must not be presented as one atomic snapshot.'))}</div></div>`;
- case '/spatial':return `${panel('Spatial investigation',spatial('Spatial evidence unavailable'),'NO GEOMETRY')}<div class="two-col">${panel('Subject catalog',table(['Typed subject','Frame','Unit','Source revision'],'No compatible spatial subjects can be listed.'))}${panel('View controls',note('Camera controls unavailable','Camera, selection and highlight controls become useful only when published geometry is available.')+item('Presentation mode','Text-only fallback active')+item('Geometry compatibility','Unsupported'),'PRESENTATION ONLY')}</div>`;
- case '/timeline':return `<div class="metric-grid">${panel('Causal record',item('Committed cuts')+item('Commit authority','World') ,'NOT CONNECTED')}${panel('Publication delivery',item('Last delivery watermark')+item('Continuity','Not verified'),'UNKNOWN')}${panel('Temporal scope',item('Source time')+item('Delivery time')+item('Browser time','Not causal time'),'SEPARATE CLOCKS')}</div>${panel('Committed-cut timeline',table(['Committed cut','World causal order','Owner references','Publication status'],'No World-verified committed-cut history is available.'),'NO HISTORY')}${panel('Timeline interpretation',guide(['Committed cuts are determined by World, not by the order of browser delivery.','Gaps, stale values and incomplete publication are distinct from absent World state.','Presentation navigation never advances or replays the causal runtime.']),'READ ONLY')}`;
- case '/sensorimotor':return `<div class="two-col">${panel('Source-asserted relationships',note('No traceable sensorimotor links','No correlations will be inferred from timestamps, subject names or similar numeric values.')+link('/claims','Inspect claim provenance'),'NO LINKS')}${panel('Trace provenance',item('Originating semantic authority')+item('Domain revision')+item('Temporal alignment')+item('Claimed relationship'),'UNAVAILABLE')}</div>${panel('Sensorimotor trace',table(['Source claim','Asserted relation','Target claim','Lineage / scope'],'No owner-asserted relations available for inspection.'),'NO TRACE')}${panel('Interpretation boundary',`<p>Published signals are not evidence of goals, intention, learning, competence or scientific efficacy unless a competent source explicitly supports that particular claim.</p>`,'EPISTEMIC LIMIT')}`;
- case '/claims':return `<div class="two-col">${panel('Claim collection',table(['Family','Typed subject','Source authority','Source revision'],'No claims from an authorized Observation source are present.'),'NO CLAIMS')}${panel('Selected claim',item('Claim identity')+item('Family and schema revision')+item('Semantic authority')+item('Subject and scope')+item('Epistemic basis')+item('Producer / asserter')+item('Domain time / revision')+item('Unit / coordinate frame')+item('World cut and lineage'),'UNSELECTED')}</div>${panel('Evidence and availability',note('No claim selected','Source claims retain their original authority; inspection does not admit scientific evidence or correct domain values.'))}`;
- case '/connection':return `<div class="metric-grid">${panel('Browser read contract',item('Client endpoint','Not authorized')+item('Transport','Not selected'),'BLOCKED')}${panel('Security and access',item('Authenticated principal','Not configured')+item('Read scope','Unapproved'),'BLOCKED')}${panel('Delivery resilience',item('Durable history','Not established')+item('Recovery','Not established'),'UNKNOWN')}</div>${panel('Connection diagnostics',`<div class="state-list"><div><strong>Local UI rendering</strong><span>Available (presentation only)</span></div><div><strong>Observation browser adapter</strong><span>Not implemented</span></div><div><strong>Live owner publications</strong><span>Not connected</span></div><div><strong>Cross-restart replay</strong><span>Not supported</span></div><div><strong>World cut verification</strong><span>Not available</span></div><div><strong>Source absence</strong><span>Cannot be inferred</span></div></div>`,'DIAGNOSTIC')}${panel('Readiness checklist',guide(['Observation Owner must approve a browser-accessible read contract (Observation #37).','Security and operations authorities must accept access and deployment boundaries (Docs #167).','Frontend adapter must preserve source identity, authority, time, lineage, gaps and coherence.','A separate review and exact-source integration test is required before any live data are rendered.']),'AWAITING CONTRACT')}`;
- default:return note('Unrecognized route','Use one of the seven supported application routes.');
- }
+// Evidence-first views over the bounded current Observation subset only.
+const esc = value => String(value ?? 'Not available').replace(/[&<>"']/g, char => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char]));
+const panel = (title, body, tag = 'CURRENT VIEW') => `<section class="panel"><div class="panel-heading"><h2>${esc(title)}</h2><span class="small-tag">${esc(tag)}</span></div><div class="panel-body">${body}</div></section>`;
+const note = (title, description, kind = 'UNKNOWN') => `<div class="empty-detail" role="status"><span class="state-pill">${esc(kind)}</span><h3>${esc(title)}</h3><p>${esc(description)}</p><p class="fine">This describes only the bounded retained Observation subset; it is not evidence that source state is absent.</p></div>`;
+const item = (label, value) => `<div class="property"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`;
+const link = (route, text) => `<a class="text-link" href="${esc(route)}" data-nav>${esc(text)} →</a>`;
+const guide = steps => `<ol class="guidance">${steps.map(step => `<li>${esc(step)}</li>`).join('')}</ol>`;
+const vector = value => Array.isArray(value) ? value.map(part => Number(part).toPrecision(6)).join(', ') : 'Not available';
+const actor = value => value ? `${value.kind}: ${value.identifier}` : 'Not available';
+
+function identityDetails(claim) {
+  return claim.identities.map(identity => item(`Identity · ${identity.kind}`, `${identity.value} (issuer ${actor(identity.issuer)})`)).join('');
+}
+
+function transformationDetails(observation) {
+  const transform = observation.lineage.transformation;
+  if (!transform) return item('Projection', 'Not supplied');
+  const configuration = Array.isArray(transform.effective_configuration)
+    ? transform.effective_configuration.map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(',') : value}`).join('; ')
+    : 'Not supplied';
+  return item('Projection', `${transform.transformation_id}@${transform.revision}`) + item('Projection configuration · source-declared', configuration);
+}
+
+function valueDetails(claim) {
+  const value = claim.value;
+  if (claim.family === 'embodiment.body_pose') {
+    return item('Position · m', vector(value.position.value)) +
+      item('Orientation · unit quaternion XYZW', vector(value.orientation.value_xyzw)) +
+      item('Reference frame', value.reference_frame) + item('Body frame', value.body_frame);
+  }
+  return item('Quantity kind', value.quantity_kind) + item('Value · unit 1', value.value) +
+    item('Declared range', `[${value.valid_range.join(', ')}]`) + item('Sample point · m', vector(value.point_m)) +
+    item('Reference frame', value.reference_frame);
+}
+
+function claimCard(claim) {
+  const observation = claim.observation;
+  const semantic = observation.claim;
+  const family = semantic.family;
+  const contextTimes = observation.context_time.length
+    ? observation.context_time.map(time => `${time.domain}.${time.kind} = ${time.value}`).join('; ')
+    : 'Not supplied';
+  const parents = observation.lineage.parents.length
+    ? observation.lineage.parents.map(parent => `${parent.namespace}: ${parent.reference}`).join('; ')
+    : 'Not supplied';
+  const header = `${family.authority}.${family.path.join('.')}`;
+  return `<article class="panel claim-card"><div class="panel-heading"><h2>${esc(header)}</h2><span class="small-tag">${esc(family.contract.revision)}</span></div><div class="panel-body">
+    ${item('Semantic authority', family.authority)}${item('Contract', `${family.contract.contract_id}@${family.contract.revision}`)}
+    ${item('Epistemic kind', semantic.epistemic_kind)}${identityDetails(claim)}${valueDetails(claim)}
+    ${item('Asserter', actor(observation.asserter))}${item('Producer', actor(observation.producer))}
+    ${item('Acquisition', observation.acquisition.method)}${item('Source time / context', contextTimes)}
+    ${item('Source lineage', parents)}${transformationDetails(observation)}${item('Local delivery sequence · not causal time', claim.deliverySequence)}
+  </div></article>`;
+}
+
+function claimsSection(source, {title = 'Independent owner publications', emptyTitle = 'No approved claims retained'} = {}) {
+  if (!source.claims.length) {
+    const copy = source.status === 'empty' ? 'The approved bounded current subset contains no retained messages.' :
+      source.status === 'unsupported' ? 'The response contained no claim family supported by this Frontend slice.' :
+      'No validated current Observation messages are available in this read.';
+    return panel(title, note(emptyTitle, copy, source.status.toUpperCase()), source.status.toUpperCase());
+  }
+  return panel(title, `<p class="fine">These are separate owner claims from one bounded current view. They are not joined into a shared snapshot, and delivery order is not causal order.</p><div class="claim-grid">${source.claims.map(claimCard).join('')}</div>`, 'READ ONLY');
+}
+
+function connectionState(source) {
+  const labels = {
+    'not-configured': ['NOT CONFIGURED', 'No approved local read has completed.'],
+    loading: ['LOADING', 'A bounded current-view read is in progress.'],
+    available: ['AVAILABLE', 'Approved claim messages were returned from the bounded current subset.'],
+    empty: ['EMPTY RETAINED SUBSET', 'No approved messages are retained in this current subset; source absence is not implied.'],
+    unsupported: ['UNSUPPORTED', 'No supported claim family was available to this frontend slice.'],
+    denied: ['DENIED', 'The read was denied; this says nothing about source presence.'],
+    disconnected: ['DISCONNECTED', 'The local Observation bridge could not be reached.'],
+    unavailable: ['UNAVAILABLE', 'The local Observation read did not complete.'],
+    error: ['INVALID RESPONSE', 'The response failed validation and was withheld.'],
+  };
+  return labels[source.status] ?? ['UNKNOWN', 'Availability is not established.'];
+}
+
+export function renderScreen(route, source) {
+  const claims = source.claims.length;
+  switch (route.path) {
+    case '/worlds':
+      return `${panel('Worlds & runs catalog', note('Catalog not supported by this contract', 'The local endpoint exposes a bounded current subset only. It does not provide World discovery, run enumeration, or a completeness guarantee.'), 'UNSUPPORTED')}${claimsSection(source, {title: 'Current owner publications'})}`;
+    case '/overview':
+      return `<div class="metric-grid">${panel('Read availability', item('State', connectionState(source)[0]) + item('Retained approved messages', claims), source.status.toUpperCase())}${panel('Scope', item('Observation scope', source.scope ?? 'Not established'), 'BOUNDED')}${panel('Coherence', item('Cross-owner snapshot', 'Not guaranteed') + item('Freshness', 'Not established'), 'NO JOIN')}</div>${panel('Spatial evidence boundary', note('No authorized scene geometry', 'BodyPose provides source-backed position and orientation values, not body geometry. This view does not construct meshes, animate bodies, or infer a complete World scene.'), 'NO SCENE')}${claimsSection(source, {title: 'Owner publications · not a composite World snapshot'})}${panel('Interpretation boundary', guide(['Each claim retains its own semantic authority, identity, source time and lineage.', 'World commit status is not inferred from delivery sequence.', 'BodyPose values and scalar-field samples are not joined by shared names, values, frames or arrival order.']), 'READ ONLY')}`;
+    case '/spatial':
+      return `${panel('Spatial evidence', note('No authorized scene geometry in this slice', 'BodyPose position and orientation are shown only as source values. This M1 slice does not construct meshes, infer shape, animate bodies, or combine frames across claims.'), 'NO SCENE')}${claimsSection(source, {title: 'Spatially relevant owner claims'})}`;
+    case '/timeline':
+      return `${panel('Causal history', note('Historical timeline not supported', 'The current-view endpoint is bounded and in-memory. Its local delivery sequence is not World causal time and cannot reconstruct committed-cut history.'), 'NO HISTORY')}${claimsSection(source, {title: 'Current messages · not a timeline'})}`;
+    case '/sensorimotor':
+      return `${panel('Source-asserted relations', note('No relation contract is available in M1', 'The two admitted claim families do not assert a sensorimotor relationship. No correlation or causal link is inferred from values, frames, identifiers, or delivery order.'), 'NO LINKS')}${claimsSection(source, {title: 'Unjoined source claims'})}`;
+    case '/claims':
+      return claimsSection(source, {title: 'Claim inspection', emptyTitle: 'No validated claim to inspect'});
+    case '/connection': {
+      const [tag, description] = connectionState(source);
+      return `<div class="metric-grid">${panel('Local Observation read', item('Availability', tag) + item('Endpoint', '/api/observation/current') + item('Method', 'GET · read only'), tag)}${panel('Scope and guarantees', item('Subset', source.scope ?? 'Not established') + item('Freshness', source.freshness ?? 'Not established') + item('Cross-owner coherence', source.coherence ?? 'Not established'), 'LIMITED')}${panel('Unsupported capabilities', item('History / persistence', 'Not supported') + item('Runtime control', 'Not supported') + item('Source census', 'Not supported'), 'OUT OF SCOPE')}</div>${panel('Read diagnostic', `<p role="status">${esc(description)}</p><p class="fine">A valid empty view, denied read, error, or disconnected bridge is never presented as proof that a World, body, organism, resource, or publication does not exist.</p>`, 'PASSIVE')} ${claimsSection(source, {title: 'Messages in the current read'})}`;
+    }
+    default:
+      return note('Unrecognized route', 'Use one of the seven supported application routes.');
+  }
 }

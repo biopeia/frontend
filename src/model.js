@@ -20,11 +20,11 @@ export function statusLabel(status) {
   if (!AVAILABILITY.includes(status)) throw new Error('Invalid availability status');
   return labels[status];
 }
-export const initialSource = Object.freeze({status:'not-configured',world:null,run:null,cut:null,delivery:null,claims:[],capabilities:[]});
+export const initialSource = Object.freeze({status:'not-configured',claims:[],scope:null,freshness:null,coherence:null,error:null});
 export function assertReadOnlySource(source) {
   if (!source || typeof source!=='object' || !AVAILABILITY.includes(source.status)) throw Error('Invalid source availability');
-  if (!Array.isArray(source.claims) || !Array.isArray(source.capabilities)) throw Error('Invalid publication collection');
-  if (source.status === 'not-configured' && (source.claims.length || source.cut)) throw Error('Configured data without source');
+  if (!Array.isArray(source.claims)) throw Error('Invalid publication collection');
+  if (source.status === 'not-configured' && source.claims.length) throw Error('Configured data without source');
   return source;
 }
 export function routeFromPath(path) { return ROUTES.find(route => route.path === path) ?? ROUTES[0]; }
