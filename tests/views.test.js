@@ -1,28 +1,75 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ROUTES} from '../src/model.js';
+import {ROUTES, initialSource} from '../src/model.js';
 import {renderScreen} from '../src/views.js';
-test('each approved route renders distinct evidence-first UI',()=> {
- const html=ROUTES.map(renderScreen);
- assert.equal(new Set(html).size,7);
- for(const page of html){assert.ok(page.includes('Not available')||page.includes('No ')||page.includes('Not configured')||page.includes('not '));assert.ok(!page.includes('runtime_tick_events')); }
+
+const bodyPose = {
+  deliverySequence: 8,
+  family: 'embodiment.body_pose',
+  identities: [
+    {kind: 'body', value: 'body-7', issuer: {kind: 'embodiment_owner_boundary', identifier: 'embodiment_owner_boundary'}},
+    {kind: 'embodiment_episode', value: 'episode-3', issuer: {kind: 'embodiment_owner_boundary', identifier: 'embodiment_owner_boundary'}},
+    {kind: 'morphology_revision', value: 'morphology-r2', issuer: {kind: 'embodiment_owner_boundary', identifier: 'embodiment_owner_boundary'}},
+  ],
+  value: {
+    position: {value: [1, 2, 3], unit: 'm'},
+    orientation: {value_xyzw: [0, 0, 0, 1], representation: 'unit_quaternion_xyzw', convention: 'right_handed_hamilton_q_v_q_conjugate'},
+    reference_frame: 'world', body_frame: 'root',
+  },
+  observation: {
+    claim: {family: {authority: 'embodiment', path: ['body_pose'], contract: {contract_id: 'embodiment.body_pose', revision: 'v1'}}, epistemic_kind: 'authoritative_state'},
+    context_time: [{domain: 'world', kind: 'world_causal_tick', value: 12}],
+    lineage: {parents: [{namespace: 'embodiment_state_sha256', reference: 'a'.repeat(64)}]},
+    asserter: {kind: 'embodiment_owner_boundary', identifier: 'embodiment_owner_boundary'},
+    producer: {kind: 'embodiment_owner_projection', identifier: 'embodiment_owner_projection'},
+    acquisition: {method: 'embodiment_owner_state_projection'},
+  },
+};
+
+const availableSource = {...initialSource, status: 'available', claims: [bodyPose], scope: 'bounded_in_memory_current_subset', freshness: 'not_established_by_snapshot', coherence: 'per_message_only_no_cross_owner_snapshot_guarantee'};
+
+test('all seven peer routes render without inventing a World or run join', () => {
+  const html = ROUTES.map(route => renderScreen(route, availableSource));
+  assert.equal(new Set(html).size, 7);
+  for (const page of html) {
+    assert.ok(!page.includes('runtime_tick_events'));
+    assert.ok(!page.includes('Committed World revision: 12'));
+  }
 });
-test('spatial screens refuse fabricated geometry',()=> {
- for(const path of ['/overview','/spatial']) {
- const html=renderScreen(ROUTES.find(r=>r.path===path));
- assert.match(html,/No source-backed world geometry|Spatial evidence unavailable/);
- assert.match(html,/No synthetic scene is displayed/);
- }
+
+test('spatial screens show source pose values but do not fabricate geometry', () => {
+  for (const path of ['/overview', '/spatial']) {
+    const html = renderScreen(ROUTES.find(route => route.path === path), availableSource);
+    assert.match(html, /No authorized scene geometry/);
+    assert.match(html, /Position · m/);
+    assert.match(html, /1\.00000, 2\.00000, 3\.00000/);
+    assert.doesNotMatch(html, /<canvas|<mesh|animated body/i);
+  }
 });
-test('claim and timeline views preserve provenance and causal distinctions',()=>{
- assert.match(renderScreen(ROUTES[5]),/Semantic authority/);
- assert.match(renderScreen(ROUTES[5]),/World cut and lineage/);
- assert.match(renderScreen(ROUTES[3]),/delivery/);
- assert.match(renderScreen(ROUTES[3]),/World-verified/);
+
+test('claim display preserves identity, authority, frame, source time, lineage and local delivery sequence', () => {
+  const html = renderScreen(ROUTES.find(route => route.path === '/claims'), availableSource);
+  for (const value of ['body-7', 'episode-3', 'morphology-r2', 'embodiment', 'world_causal_tick = 12', 'embodiment_state_sha256', 'a'.repeat(64), 'Local delivery sequence · not causal time']) {
+    assert.ok(html.includes(value), `expected displayed field: ${value}`);
+  }
+  assert.match(html, /Source lineage/);
+  assert.match(html, /not joined into a shared snapshot/);
 });
-test('browser diagnostics never claim an approved access contract',()=>{
- const html=renderScreen(ROUTES[6]);
- assert.match(html,/Not authorized/);
- assert.match(html,/Not implemented/);
- assert.match(html,/Observation #37/);
+
+test('HTML from source claims is escaped before display', () => {
+  const hostile = {...bodyPose, identities: [{...bodyPose.identities[0], value: '<script>alert(1)</script>'}]};
+  const html = renderScreen(ROUTES.find(route => route.path === '/claims'), {...availableSource, claims: [hostile]});
+  assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
+
+test('empty current subset is not shown as source absence', () => {
+  const html = renderScreen(ROUTES.find(route => route.path === '/overview'), {...initialSource, status: 'empty', claims: [], scope: 'bounded_in_memory_current_subset'});
+  assert.match(html, /not evidence that source state is absent/);
+});
+
+test('history, world catalog and sensorimotor relations remain explicitly unsupported', () => {
+  assert.match(renderScreen(ROUTES.find(route => route.path === '/timeline'), availableSource), /Historical timeline not supported/);
+  assert.match(renderScreen(ROUTES.find(route => route.path === '/worlds'), availableSource), /World discovery, run enumeration/);
+  assert.match(renderScreen(ROUTES.find(route => route.path === '/sensorimotor'), availableSource), /No relation contract is available/);
 });

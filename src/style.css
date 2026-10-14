@@ -4,6 +4,7 @@
 
 /* Seven-screen evidence-first layouts */
 .section-heading{margin:10px 0 20px}.section-heading h2{font-size:18px;margin:0 0 5px}.section-heading p{margin:0;color:var(--muted);font-size:13px}
+.claim-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,390px),1fr));gap:14px}.claim-card{min-width:0}.claim-card .panel-heading{align-items:flex-start}.claim-card .panel-body{padding:12px 18px}.claim-card .property{align-items:flex-start}.claim-card .property strong{font-weight:600}.topbar button:disabled{cursor:wait;opacity:.65}
 .metric-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:20px}
 .metric-grid .panel{min-height:155px}.metric-grid .panel-heading{padding:15px}.metric-grid .panel-body{padding:8px 16px 16px}
 .panel-body{padding:20px}.panel-body>p{color:var(--muted);font-size:13px;line-height:1.7}
