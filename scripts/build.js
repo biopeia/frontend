@@ -8,5 +8,6 @@ let main=await readFile('src/main.js','utf8');
 main=main.replace("import './style.css';",'');
 await writeFile(join(out,'assets/main.js'),main);
 await copyFile('src/model.js',join(out,'assets/model.js'));
+await copyFile('src/views.js',join(out,'assets/views.js'));
 await copyFile('src/style.css',join(out,'assets/style.css'));
 console.log('Built static read-only shell to dist/');
