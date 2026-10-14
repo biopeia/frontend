@@ -23,3 +23,5 @@ Seven peer-level routes: Worlds & Runs; World Overview; Spatial Explorer; Causal
 ## Governance
 
 Class ORDINARY (bootstrap); risk MEDIUM for cross-domain presentation and future integration. Independent BAW-004 review and relevant owners required before merge. No automatic merge or production deployment. No legacy or compatibility shim.
+
+Repository-specific contributor and agent instructions are in [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). The canonical agent work contract and review policy remain maintained in the private [`biopeia/.github-private`](https://github.com/biopeia/.github-private/tree/main/workflow) repository; this repository does not duplicate or override them.
