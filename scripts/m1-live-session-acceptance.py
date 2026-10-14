@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import signal
 import subprocess
 import tempfile
 import time
@@ -98,9 +97,6 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
             record["observed_at_utc"] = utc_now()
             world_events.append(record)
             if record.get("event") == "ready":
-                # Synchronize only this newly created test child at the
-                # ready boundary so Chrome is connected before cycle 1.
-                # This is test scheduling, not a runtime control contract.
                 bridge_url = str(record.get("observation_bridge", "")) + "/v1/current"
                 request = urllib.request.Request(bridge_url, headers={"Origin": "http://attacker.invalid"})
                 try:
@@ -111,7 +107,6 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
                 else:
                     raise RuntimeError("Observation bridge accepted a foreign Origin")
 
-                world_process.send_signal(signal.SIGSTOP)
                 browser_env = {
                     **os.environ,
                     "FRONTEND_ROOT": str(frontend),
@@ -133,7 +128,6 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
                 if not browser_ready_path.is_file():
                     raise RuntimeError("Real browser did not attach to the live bridge before timeout")
                 browser_attached_at = json.loads(browser_ready_path.read_text(encoding="utf-8"))["browser_page_attached_at_utc"]
-                world_process.send_signal(signal.SIGCONT)
             if record.get("event") == "cycle_committed":
                 tick = record.get("last_verified_committed_tick")
                 if not isinstance(tick, int):
@@ -159,7 +153,6 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
             browser_process.terminate()
             browser_process.wait(timeout=10)
         if world_process.poll() is None:
-            world_process.send_signal(signal.SIGCONT)
             world_process.terminate()
             world_process.wait(timeout=10)
 
@@ -235,7 +228,6 @@ report = {
     ],
     "browser": browser_result,
     "browser_attached_at_utc": browser_attached_at,
-    "test_synchronization": "World child paused only at ready until real Chrome completed its initial loopback read; then resumed before cycle 1.",
     "unavailable_browser": unavailable_result,
     "browser_observed_commits_while_attached": live_ticks,
     "terminal": terminal,
