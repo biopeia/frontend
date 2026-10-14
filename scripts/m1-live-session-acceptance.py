@@ -101,7 +101,6 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
                 # Synchronize only this newly created test child at the
                 # ready boundary so Chrome is connected before cycle 1.
                 # This is test scheduling, not a runtime control contract.
-                world_process.send_signal(signal.SIGSTOP)
                 bridge_url = str(record.get("observation_bridge", "")) + "/v1/current"
                 request = urllib.request.Request(bridge_url, headers={"Origin": "http://attacker.invalid"})
                 try:
@@ -112,6 +111,7 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
                 else:
                     raise RuntimeError("Observation bridge accepted a foreign Origin")
 
+                world_process.send_signal(signal.SIGSTOP)
                 browser_env = {
                     **os.environ,
                     "FRONTEND_ROOT": str(frontend),
