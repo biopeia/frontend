@@ -41,7 +41,7 @@ for (const name of ['ORGANISM_REPO', 'EMBODIMENT_REPO', 'ENVIRONMENT_REPO', 'MOD
 
 console.log(JSON.stringify({event: 'acceptance-inputs', frontend_sha: frontendSha, world_sha: process.env.WORLD_SHA,
   observation_pinned_sha: pinnedObservation, world_m1_bin: process.env.WORLD_M1_BIN,
-  world_profile: process.env.WORLD_PROFILE, cycles: 3}));
+  world_profile: process.env.WORLD_PROFILE, cycles: 20}));
 run('node', ['scripts/build.js'], {cwd: root});
 run(process.env.WORLD_PYTHON || 'python3', ['scripts/m1-live-session-acceptance.py'], {
   cwd: root,

@@ -76,7 +76,7 @@ profile_sha = hashlib.sha256(profile_path.read_bytes()).hexdigest()
 with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
     state_parent = Path(temporary)
     state_root = state_parent / "world-state"
-    command = [str(bridge_bin), "--profile", str(profile_path), "--state-root", str(state_root), "--cycles", "3"]
+    command = [str(bridge_bin), "--profile", str(profile_path), "--state-root", str(state_root), "--cycles", "20"]
     world_process = subprocess.Popen(command, cwd=world, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     world_events: list[dict[str, object]] = []
     event_times: dict[int, str] = {}
@@ -169,8 +169,8 @@ if source_revisions.get("world") != world_sha:
     raise RuntimeError(f"World runtime reports source {source_revisions.get('world')}, expected {world_sha}")
 if source_revisions.get("observation") != expected_observation_sha:
     raise RuntimeError("World runtime Observation source does not match the pinned bridge source")
-if terminal.get("last_verified_committed_tick") != 3:
-    raise RuntimeError(f"Expected 3 committed cycles for bounded live check, got {terminal}")
+if terminal.get("last_verified_committed_tick") != 20:
+    raise RuntimeError(f"Expected 20 committed cycles for bounded live check, got {terminal}")
 
 attached_at = datetime.fromisoformat(str(browser_attached_at).replace("Z", "+00:00"))
 snapshots = browser_result.get("snapshots")
@@ -235,7 +235,7 @@ report = {
                "foreign_origin_rejected": True, "no_non_same_origin_browser_requests": True,
                "browser_attached_during_at_least_two_commits": True},
     "limitations": [
-        "Three committed ticks in one fresh local session only; this does not establish tolerance at 24 or more cycles.",
+        "Twenty committed ticks in one fresh local session only; this does not establish tolerance at 24 or more cycles.",
         "Loopback current-view only; no history, remote access, scientific efficacy, or atomic cross-owner snapshot is demonstrated.",
         "Unavailable-state behavior is covered by the existing separate bounded browser acceptance, not a source-absence claim.",
     ],
