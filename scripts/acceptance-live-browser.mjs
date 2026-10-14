@@ -78,17 +78,16 @@ try {
   await send('Runtime.enable');
   await send('Network.enable');
   await send('Page.navigate', {url: origin + '/overview'});
+  if (process.env.BROWSER_READY_PATH) {
+    await writeFile(process.env.BROWSER_READY_PATH, JSON.stringify({browser_page_attached_at_utc: new Date().toISOString()}), {flag: 'wx'});
+  }
   let connectedAt;
-  for (let i = 0; i < 100; i += 1) {
+  for (let i = 0; i < 1200; i += 1) {
     const status = await evaluate("document.querySelector('.connection-indicator')?.innerText || ''");
     if (status.includes('Current view available')) { connectedAt = new Date().toISOString(); break; }
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   if (!connectedAt) throw new Error('Browser did not connect to the live current-view bridge');
-  if (process.env.BROWSER_READY_PATH) {
-    await writeFile(process.env.BROWSER_READY_PATH, JSON.stringify({browser_attached_at_utc: connectedAt}), {flag: 'wx'});
-  }
-
   const snapshots = [];
   const polls = [];
   const deadline = Date.now() + 60_000;

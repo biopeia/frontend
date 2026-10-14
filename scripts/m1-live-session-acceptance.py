@@ -132,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
                     time.sleep(0.05)
                 if not browser_ready_path.is_file():
                     raise RuntimeError("Real browser did not attach to the live bridge before timeout")
-                browser_attached_at = json.loads(browser_ready_path.read_text(encoding="utf-8"))["browser_attached_at_utc"]
+                browser_attached_at = json.loads(browser_ready_path.read_text(encoding="utf-8"))["browser_page_attached_at_utc"]
                 world_process.send_signal(signal.SIGCONT)
             if record.get("event") == "cycle_committed":
                 tick = record.get("last_verified_committed_tick")
