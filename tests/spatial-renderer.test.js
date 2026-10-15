@@ -1,0 +1,61 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {validateEnvironmentDescriptor,validateEmbodimentDescriptor} from '../src/spatial-renderer.js';
+import * as spatialRenderer from '../src/spatial-renderer.js';
+
+const frame={frame_id:'env.frame',parent_frame_id:'world',origin_m:[0,0,0],x_axis_in_parent:[1,0,0],y_axis_in_parent:[0,1,0],z_axis_in_parent:[0,0,1],handedness:'RIGHT_HANDED',up_axis:'Z'};
+const env={schema_version:1,environment_id:'environment.demo',environment_revision:'r1',render_geometry_sha256:'022f7875e378b8d9196f13528af47723ffd352f70e379e404946acb3ddc41a9d',length_unit:'m',frame:{...frame,frame_id:'environment.frame',parent_frame_id:'environment.parent-frame'},items:[]};
+const embodiment={contract_revision:'embodiment.render_morphology/v1',schema_version:1,body_id:'body.one',embodiment_episode_id:'episode.one',morphology_revision:'m1',geometry_revision:'g1',render_geometry_sha256:'62a6a5dc9be0d29cabfbd1d5c55079988dd7e6f85b6f14816d15ebae8ef0c234',coordinate_system:'right_handed_z_up',length_unit:'m',segments:[{segment_id:'body.root',shape:'box',dimensions_m:[0.2,0.1,0.1],visual_origin_in_link_m:[0,0,0]}],joints:[]};
+const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):Array.isArray(value)?`[${value.map(canonical).join(',')}]`:`{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+const codePointCompare=(a,b)=>{const x=Array.from(a,c=>c.codePointAt(0)),y=Array.from(b,c=>c.codePointAt(0));for(let i=0;i<Math.min(x.length,y.length);i++)if(x[i]!==y[i])return x[i]-y[i];return x.length-y.length;};
+const embodimentDigest=descriptor=>createHash('sha256').update(`biopeia:embodiment.render_morphology/v1\n${canonical({contract_revision:descriptor.contract_revision,schema_version:descriptor.schema_version,coordinate_system:descriptor.coordinate_system,length_unit:descriptor.length_unit,segments:[...descriptor.segments].sort((a,b)=>codePointCompare(a.segment_id,b.segment_id)),joints:[...descriptor.joints].sort((a,b)=>codePointCompare(a.joint_id,b.joint_id))})}`).digest('hex');
+
+test('accepts Environment empty descriptor without inventing primitives or trusting a forged digest',async()=>{
+ assert.equal((await validateEnvironmentDescriptor(env)).ok,true);
+ assert.equal((await validateEnvironmentDescriptor({...env,environment_revision:'r2'})).ok,false);
+});
+test('rejects unknown Environment fields, invalid frame and oversized lists',async()=>{
+  assert.equal((await validateEnvironmentDescriptor({...env,floor:true})).ok,false);
+  assert.equal((await validateEnvironmentDescriptor({...env,frame:{...env.frame,parent_frame_id:''}})).ok,false);
+  assert.equal((await validateEnvironmentDescriptor({...env,frame:{...env.frame,z_axis_in_parent:[0,0,2]}})).ok,false);
+  assert.equal((await validateEnvironmentDescriptor({...env,items:Array.from({length:129},(_,n)=>({object_id:`p${n}`,kind:'sphere',frame_id:'environment.frame',center_m:[0,0,0],radius_m:1}))})).ok,false);
+});
+test('rejects render values that cannot be represented as finite geometry',async()=>{
+  assert.equal((await validateEnvironmentDescriptor({...env,items:[{object_id:'s',kind:'sphere',frame_id:'environment.frame',center_m:[Number.MAX_VALUE,0,0],radius_m:1}]})).ok,false);
+  assert.equal((await validateEmbodimentDescriptor({...embodiment,segments:[{...embodiment.segments[0],dimensions_m:[1e-50,1,1]}]})).ok,false);
+});
+test('validates bounded Embodiment static descriptor and closed keys',async()=>{
+  assert.equal((await validateEmbodimentDescriptor(embodiment)).ok,true);
+  assert.equal((await validateEmbodimentDescriptor({...embodiment,private_solver_value:2})).ok,false);
+  assert.equal((await validateEmbodimentDescriptor({...embodiment,segments:[{...embodiment.segments[0],dimensions_m:[0,1,1]}]})).ok,false);
+});
+test('accepts topology-only carrier links without fabricating renderable segments',async()=>{
+ const candidate={...embodiment,joints:[{joint_id:'joint.root-carrier',parent_link_id:'body.root',child_link_id:'body.carrier',joint_type:'revolute',joint_origin_in_parent_m:[0,0,0],axis_in_joint_frame:[0,0,1]}]};
+ candidate.render_geometry_sha256=embodimentDigest(candidate);
+ const result=await validateEmbodimentDescriptor(candidate);
+ assert.equal(result.ok,true);
+ assert.equal(result.value.segments.length,1);
+ assert.equal(result.value.joints[0].child_link_id,'body.carrier');
+});
+test('uses producer-compatible Unicode code-point ordering in Embodiment digests',async()=>{
+ const candidate={...embodiment,segments:[
+  {segment_id:'\u{10000}',shape:'box',dimensions_m:[1,1,1],visual_origin_in_link_m:[0,0,0]},
+  {segment_id:'\uE000',shape:'box',dimensions_m:[1,1,1],visual_origin_in_link_m:[0,0,0]},
+ ]};
+ candidate.render_geometry_sha256=embodimentDigest(candidate);
+ assert.equal((await validateEmbodimentDescriptor(candidate)).ok,true);
+ assert.ok('\u{10000}' < '\uE000', 'UTF-16 ordering differs from Unicode code-point ordering for this pair');
+});
+test('rejects duplicate IDs and oversized topology-only link sets',async()=>{
+ const duplicate={...embodiment,joints:[{joint_id:'j',parent_link_id:'body.root',child_link_id:'body.root',joint_type:'revolute',joint_origin_in_parent_m:[0,0,0],axis_in_joint_frame:[0,0,1]}]};
+ duplicate.render_geometry_sha256=embodimentDigest(duplicate);
+ assert.equal((await validateEmbodimentDescriptor(duplicate)).ok,false);
+ const oversized={...embodiment,joints:Array.from({length:127},(_,i)=>({joint_id:`j${i}`,parent_link_id:`link${i}`,child_link_id:`link${i+1}`,joint_type:'revolute',joint_origin_in_parent_m:[0,0,0],axis_in_joint_frame:[0,0,1]}))};
+ oversized.render_geometry_sha256=embodimentDigest(oversized);
+ assert.equal((await validateEmbodimentDescriptor(oversized)).ok,false);
+});
+test('does not expose dynamic pose acceptance before a World proof boundary is integrated',()=>{
+ assert.equal('validateEmbodimentPoses' in spatialRenderer,false);
+ assert.equal(spatialRenderer.mountSpatialExplorer.length,1);
+});

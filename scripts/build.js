@@ -9,6 +9,7 @@ main=main.replace("import './style.css';",'');
 await writeFile(join(out,'assets/main.js'),main);
 await copyFile('src/model.js',join(out,'assets/model.js'));
 await copyFile('src/views.js',join(out,'assets/views.js'));
+await copyFile('src/spatial-renderer.js',join(out,'assets/spatial-renderer.js'));
 await copyFile('src/observation-client.js',join(out,'assets/observation-client.js'));
 await copyFile('src/snapshot-refresh.js',join(out,'assets/snapshot-refresh.js'));
 await copyFile('src/observation-store.js',join(out,'assets/observation-store.js'));
