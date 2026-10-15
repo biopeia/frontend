@@ -29,6 +29,13 @@ const utf8Compare = (a,b) => {
   for(let i=0;i<Math.min(x.length,y.length);i++) if(x[i]!==y[i]) return x[i]-y[i];
   return x.length-y.length;
 };
+// Python's producer orders Unicode strings by code point. For valid Unicode,
+// UTF-8 byte order is equivalent and avoids JavaScript UTF-16 surrogate order.
+const codePointCompare = (a,b) => {
+  const x=Array.from(a, c=>c.codePointAt(0)), y=Array.from(b,c=>c.codePointAt(0));
+  for(let i=0;i<Math.min(x.length,y.length);i++) if(x[i]!==y[i]) return x[i]-y[i];
+  return x.length-y.length;
+};
 
 /** Strict structural preflight for Environment's approved closed descriptor. Digest verification is owner-side. */
 export async function validateEnvironmentDescriptor(value) {
@@ -70,49 +77,31 @@ export async function validateEmbodimentDescriptor(value) {
   const jointIds=new Set();
   for (const j of value.joints) { if (!keys(j,['joint_id','parent_link_id','child_link_id','joint_type','joint_origin_in_parent_m','axis_in_joint_frame']) || !str(j.joint_id)||jointIds.has(j.joint_id)||!str(j.parent_link_id)||!str(j.child_link_id)||j.parent_link_id===j.child_link_id||j.joint_type!=='revolute'||!vec3(j.joint_origin_in_parent_m)||!vec3(j.axis_in_joint_frame)||Math.hypot(...j.axis_in_joint_frame)<1e-12||Math.abs(Math.hypot(...j.axis_in_joint_frame)-1)>1e-9) return fail('Embodiment joint topology is invalid.'); jointIds.add(j.joint_id); links.add(j.parent_link_id); links.add(j.child_link_id); }
   if (links.size > 128) return fail('Embodiment topology exceeds the approved link bound.');
-  const preimage={contract_revision:value.contract_revision,schema_version:value.schema_version,coordinate_system:value.coordinate_system,length_unit:value.length_unit,segments:[...value.segments].sort((a,b)=>a.segment_id<b.segment_id?-1:a.segment_id>b.segment_id?1:0),joints:[...value.joints].sort((a,b)=>a.joint_id<b.joint_id?-1:a.joint_id>b.joint_id?1:0)};
+  const preimage={contract_revision:value.contract_revision,schema_version:value.schema_version,coordinate_system:value.coordinate_system,length_unit:value.length_unit,segments:[...value.segments].sort((a,b)=>codePointCompare(a.segment_id,b.segment_id)),joints:[...value.joints].sort((a,b)=>codePointCompare(a.joint_id,b.joint_id))};
   if(await sha256(`biopeia:embodiment.render_morphology/v1\n${jcs(preimage)}`)!==value.render_geometry_sha256) return fail('Embodiment render geometry digest does not match its descriptor.');
   return {ok:true,value};
 }
 
-/** Dynamic values are never accepted for composition absent the caller's World-owned proof verifier. */
-export async function validateEmbodimentPoses(descriptor, poseSet, verifyWorldCut) {
-  const valid=await validateEmbodimentDescriptor(descriptor); if(!valid.ok) return valid;
-  const binding=['body_id','embodiment_episode_id','morphology_revision','geometry_revision','render_geometry_sha256'];
-  if (!poseSet || !keys(poseSet,['body_id','embodiment_episode_id','morphology_revision','geometry_revision','render_geometry_sha256','source_world_id','confirmed_cut_reference','physical_step_id','reference_frame','length_unit','poses','completeness']) || binding.some(k=>poseSet[k]!==descriptor[k]) || !['source_world_id','confirmed_cut_reference','physical_step_id'].every(k=>str(poseSet[k])) || poseSet.reference_frame!=='physics3d.world' || poseSet.length_unit!=='m' || poseSet.completeness!=='complete' || !Array.isArray(poseSet.poses) || poseSet.poses.length!==descriptor.segments.length) return fail('Dynamic poses do not exactly bind to the static descriptor.');
-  const expected=new Set(descriptor.segments.map(s=>s.segment_id));
-  for(const p of poseSet.poses) { if(!keys(p,['segment_id','translation_m','orientation_xyzw'])||!expected.delete(p.segment_id)||!representableVec(p.translation_m)||!Array.isArray(p.orientation_xyzw)||p.orientation_xyzw.length!==4||!p.orientation_xyzw.every(v=>finite(v)&&f32(v))||Math.abs(Math.hypot(...p.orientation_xyzw)-1)>1e-6) return fail('Dynamic link transform set is partial or invalid.'); }
-  if(expected.size) return fail('Dynamic transform set is incomplete.');
-  // Invoke the World-owned proof verifier only after the candidate is a bounded,
-  // structurally valid, exactly bound pose set. It must be synchronous: an
-  // asynchronous verdict cannot authorize rendering in this call path.
-  let cutVerified=false;
-  try { cutVerified=typeof verifyWorldCut==='function' && verifyWorldCut(poseSet)===true; } catch { cutVerified=false; }
-  return cutVerified ? {ok:true,value:poseSet} : fail('Dynamic poses are not rendered: a World-owned verifier has not established their exact committed cut.');
-}
-
 // The current observation contract carries no spatial descriptor families. This
 // mount is intentionally an adapter boundary, not an implicit data join.
-export async function mountSpatialExplorer(container, {environment=null, embodiment=null, dynamics=null, verifyWorldCut=null}={}) {
+export async function mountSpatialExplorer(container, {environment=null, embodiment=null}={}) {
   const env=environment ? await validateEnvironmentDescriptor(environment) : fail('Environment projection not available in this Observation view.');
   const body=embodiment ? await validateEmbodimentDescriptor(embodiment) : fail('Embodiment projection not available in this Observation view.');
-  const poses=dynamics && body.ok ? await validateEmbodimentPoses(body.value,dynamics,verifyWorldCut) : fail('Dynamic Embodiment poses unavailable; no motion is inferred.');
-  container.innerHTML=`<div class="spatial-status" role="status">${env.ok||body.ok?'Partial owner projections available; domains are shown in separate coordinate views.':'Spatial geometry unavailable in the current Observation contract.'}</div><div class="spatial-view-grid">${viewMarkup('Environment static geometry',env.ok?`${escapeHtml(env.value.environment_id)} · ${escapeHtml(env.value.environment_revision)} · ${env.value.items.length} items · frame ${escapeHtml(env.value.frame.frame_id)} · m · right-handed · up ${escapeHtml(env.value.frame.up_axis)}`:`Unavailable · ${escapeHtml(env.reason)}`,env.ok?env.value.items.length:0,env.ok&&env.value.items.length>0,env.ok&&!env.value.items.length?'EMPTY':null)}${viewMarkup(poses.ok?'Embodiment · verified link poses':'Embodiment morphology',poses.ok?`${escapeHtml(body.value.body_id)} · source World ${escapeHtml(poses.value.source_world_id)} · cut ${escapeHtml(poses.value.confirmed_cut_reference)} · physics3d.world · m · right-handed Z-up`:body.ok?`${escapeHtml(body.value.body_id)} · geometry ${escapeHtml(body.value.geometry_revision)} · ${body.value.segments.length} link-local boxes; transforms unavailable, so no body is drawn`: `Unavailable · ${escapeHtml(body.reason)}`,poses.ok?body.value.segments.length:body.ok?body.value.segments.length:0,poses.ok&&body.value.segments.length>0)}</div><p class="fine">Owner projections remain independent; no shared frame or coherent World cut is implied. ${escapeHtml(poses.ok?'Verified dynamic poses are available for a separate future presentation adapter.':poses.reason)}</p>`;
+  // A World cut-proof verifier is not integrated in this Frontend contract.
+  // Consequently this renderer accepts no dynamic pose input, regardless of a
+  // caller-supplied boolean/callback. A future trusted adapter must be specified
+  // and wired explicitly before dynamic transforms can be presented.
+  const dynamics=fail('Dynamic Embodiment poses unavailable: no World-owned cut verifier is integrated in this Frontend.');
+  container.innerHTML=`<div class="spatial-status" role="status">${env.ok||body.ok?'Partial owner projections available; domains are shown in separate coordinate views.':'Spatial geometry unavailable in the current Observation contract.'}</div><div class="spatial-view-grid">${viewMarkup('Environment static geometry',env.ok?`${escapeHtml(env.value.environment_id)} · ${escapeHtml(env.value.environment_revision)} · ${env.value.items.length} items · frame ${escapeHtml(env.value.frame.frame_id)} · m · right-handed · up ${escapeHtml(env.value.frame.up_axis)}`:`Unavailable · ${escapeHtml(env.reason)}`,env.ok?env.value.items.length:0,env.ok&&env.value.items.length>0,env.ok&&!env.value.items.length?'EMPTY':null)}${viewMarkup('Embodiment morphology',body.ok?`${escapeHtml(body.value.body_id)} · geometry ${escapeHtml(body.value.geometry_revision)} · ${body.value.segments.length} link-local boxes; transforms unavailable, so no body is drawn`:`Unavailable · ${escapeHtml(body.reason)}`,body.ok?body.value.segments.length:0,false)}</div><p class="fine">Owner projections remain independent; no shared frame or coherent World cut is implied. ${escapeHtml(dynamics.reason)}</p>`;
   const canvases=container.querySelectorAll('.spatial-webgl');
   if (env.ok) attachCamera(canvases[0], drawCanvas(canvases[0], env.value.items.map(item=>toZUp(item,env.value.frame.up_axis))));
   // A verified pose set is rendered in its own World frame viewport. It is never
   // overlaid with Environment without a separate frame/cut composition contract.
-  if (poses.ok) attachCamera(canvases[1], drawCanvas(canvases[1], body.value.segments.map(segment=>{const pose=poses.value.poses.find(p=>p.segment_id===segment.segment_id);return {...segment,transform:pose};})));
-  return {environment:env, embodiment:body, dynamics:poses};
+  return {environment:env, embodiment:body, dynamics};
 }
 function viewMarkup(title, detail, count, renderable,emptyState=null){const id=title.startsWith('Environment')?'environment-view':'embodiment-view';return `<section class="panel spatial-owner-panel"><div class="panel-heading"><h2>${title}</h2><span class="small-tag">${emptyState??(count?(renderable?'OWNER DATA':'PARTIAL · NOT PLACED'):'UNAVAILABLE')}</span></div><p class="fine">${detail}</p>${renderable?`<div class="spatial-camera" aria-label="Presentation-only camera controls"><button type="button" data-camera="left" data-view="${id}" aria-label="Rotate ${title} view left">Rotate left</button><button type="button" data-camera="right" data-view="${id}" aria-label="Rotate ${title} view right">Rotate right</button><button type="button" data-camera="tilt-up" data-view="${id}" aria-label="Tilt ${title} view up">Tilt up</button><button type="button" data-camera="tilt-down" data-view="${id}" aria-label="Tilt ${title} view down">Tilt down</button><button type="button" data-camera="zoom-in" data-view="${id}" aria-label="Zoom ${title} view in">Zoom in</button><button type="button" data-camera="zoom-out" data-view="${id}" aria-label="Zoom ${title} view out">Zoom out</button><button type="button" data-camera="reset" data-view="${id}" aria-label="Reset ${title} view">Reset</button></div><div class="spatial-canvas-wrap"><canvas id="${id}" class="spatial-webgl" aria-label="${title}; source-owned geometry; presentation-only viewport" role="img"></canvas></div>`:''}<p class="fine">${count?`${count} owner-authored primitive(s); this view does not establish physical or cross-domain placement.`:emptyState==='EMPTY'?'The valid descriptor contains no Environment geometry.':'No geometry is synthesized.'}</p></section>`;}
 function escapeHtml(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
-function applyPose(point, pose) {
-  const [x,y,z]=point, [qx,qy,qz,qw]=pose.orientation_xyzw;
-  const tx=2*(qy*z-qz*y), ty=2*(qz*x-qx*z), tz=2*(qx*y-qy*x);
-  return [x+qw*tx+(qy*tz-qz*ty)+pose.translation_m[0], y+qw*ty+(qz*tx-qx*tz)+pose.translation_m[1], z+qw*tz+(qx*ty-qy*tx)+pose.translation_m[2]];
-}
 function toZUp(item,up){
   const map=v=>up==='X'?[v[1],v[2],v[0]]:up==='Y'?[v[0],-v[2],v[1]]:[...v];
   return item.kind==='sphere'?{...item,center_m:map(item.center_m)}:item.kind==='ground_plane'?{...item,normal:map(item.normal)}:item;
@@ -135,7 +124,7 @@ function primitiveMesh(item) {
   } else if(item.shape==='box') {
     const [x,y,z]=item.dimensions_m.map(v=>v/2),o=item.visual_origin_in_link_m;
     const v=[[-x,-y,-z],[x,-y,-z],[x,y,-z],[-x,y,-z],[-x,-y,z],[x,-y,z],[x,y,z],[-x,y,z]].map(q=>q.map((n,i)=>n+o[i]));
-    for(const f of [[0,1,2,0,2,3],[4,6,5,4,7,6],[0,4,5,0,5,1],[1,5,6,1,6,2],[2,6,7,2,7,3],[3,7,4,3,4,0]]) for(const i of f) { const p=v[i]; if(item.transform) out.push(...applyPose(p,item.transform)); else out.push(...p); }
+    for(const f of [[0,1,2,0,2,3],[4,6,5,4,7,6],[0,4,5,0,5,1],[1,5,6,1,6,2],[2,6,7,2,7,3],[3,7,4,3,4,0]]) for(const i of f) out.push(...v[i]);
   }
   return new Float32Array(out);
 }
