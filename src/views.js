@@ -69,6 +69,63 @@ function claimsSection(source, {title = 'Independent owner publications', emptyT
   return panel(title, `${staleNotice}<p class="fine">These are separate owner claims from one bounded current view. They are not joined into a shared snapshot, and delivery order is not causal order.</p><div class="claim-grid">${source.claims.map(claimCard).join('')}</div>`, source.stale ? 'STALE · LAST KNOWN' : 'READ ONLY');
 }
 
+function coordinateMarker(claim, stale) {
+  const value = claim.value;
+  const family = claim.family;
+  const isBodyPose = claim.family === 'embodiment.body_pose';
+  const coordinates = isBodyPose ? value?.position?.value : value?.point_m;
+  const frame = value?.reference_frame;
+  if (!['embodiment.body_pose', 'environment.finite_scalar_field'].includes(family) ||
+      !Array.isArray(coordinates) || coordinates.length !== 3 ||
+      !coordinates.every(Number.isFinite) || typeof frame !== 'string' || !frame) return '';
+
+  const [x, y, z] = coordinates;
+  // Each claim is independently centered and scaled; this is a display mapping,
+  // not a physical scale and never compares coordinates across claims.
+  const extent = Math.max(1, Math.abs(x), Math.abs(y)) * 1.15;
+  const center = 120;
+  const radius = 86;
+  const markerX = center + x / extent * radius;
+  const markerY = center - y / extent * radius;
+  const title = family;
+  const bodyFrame = isBodyPose ? value?.body_frame : null;
+  const identities = claim.identities.map(identity => `${identity.kind}=${identity.value} (issuer ${actor(identity.issuer)})`).join('; ') || 'Not supplied';
+  const contextTimes = claim.observation.context_time.map(time => `${time.domain}.${time.kind} = ${time.value}`).join('; ') || 'Not supplied';
+  const parents = claim.observation.lineage.parents.map(parent => `${parent.namespace}: ${parent.reference}`).join('; ') || 'Not supplied';
+  const identityKey = JSON.stringify(claim.identities.map(identity => [identity.issuer?.kind ?? null, identity.issuer?.identifier ?? null, identity.kind, identity.value]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+  const key = `${family}:${identityKey}`;
+  return `<article class="panel coordinate-marker-panel" data-key="${esc(key)}" data-coordinate-x="${esc(x)}" data-coordinate-y="${esc(y)}" data-coordinate-z="${esc(z)}">
+    <div class="panel-heading"><h2>${esc(title)}</h2><span class="small-tag">${esc(claim.observation.claim.family.contract.revision)} · ${stale ? 'STALE' : 'OWNER CLAIM'}</span></div>
+    <div class="panel-body"><p class="fine">Separate owner claims; no shared scene or coordinate join.</p>
+      <p class="fine">Identity: ${esc(identities)}<br>Source context: ${esc(contextTimes)}<br>Source lineage: ${esc(parents)}</p>
+      <figure class="coordinate-marker-figure" aria-label="Independent coordinate marker for ${esc(title)} in frame ${esc(frame)}">
+        <svg viewBox="0 0 240 240" role="img" aria-label="Coordinate components X and Y in metres; independently auto-scaled for presentation">
+          <line x1="24" y1="${center}" x2="216" y2="${center}" class="coordinate-axis" />
+          <line x1="${center}" y1="24" x2="${center}" y2="216" class="coordinate-axis" />
+          <text x="218" y="${center + 4}" class="coordinate-label">X</text>
+          <text x="${center + 4}" y="18" class="coordinate-label">Y</text>
+          <circle cx="${markerX}" cy="${markerY}" r="6" class="coordinate-marker" aria-hidden="true" />
+        </svg>
+        <figcaption>Reference frame: <strong>${esc(frame)}</strong>${bodyFrame ? ` · Body frame: <strong>${esc(bodyFrame)}</strong>` : ''} · X/Y components (m)</figcaption>
+      </figure>
+      <div class="property"><span>Z coordinate · m</span><strong>${esc(Number(z).toPrecision(6))}</strong></div>
+      <p class="fine">Auto-scaled independently for presentation only; not a physical scale.</p>
+    </div>
+  </article>`;
+}
+
+function spatialMarkers(source) {
+  const markers = source.claims.map(claim => coordinateMarker(claim, source.stale)).filter(Boolean);
+  if (!markers.length) {
+    const title = source.claims.length ? 'No authorized coordinate values available' : 'No authorized coordinate values available';
+    const description = source.claims.length
+      ? 'The retained approved claims do not contain a supported finite coordinate triplet for this marker view.'
+      : 'No validated coordinate values are present in this bounded retained Observation subset.';
+    return panel('Independent coordinate evidence', note(title, description, source.status.toUpperCase()), source.stale ? 'STALE · LAST KNOWN' : 'NO MARKERS');
+  }
+  return panel('Independent coordinate evidence', `<p class="fine">Each marker represents one owner claim only. Claims remain separate; this is not a physical scene, shared coordinate space, or causal snapshot.</p><div class="coordinate-marker-grid">${markers.join('')}</div>`, source.stale ? 'STALE · LAST KNOWN' : 'SEPARATE MARKERS');
+}
+
 function connectionState(source) {
   const labels = {
     'not-configured': ['NOT CONFIGURED', 'No approved local read has completed.'],
@@ -93,7 +150,7 @@ export function renderScreen(route, source) {
     case '/overview':
       return `<div data-observation-region="overview-metrics"><div class="metric-grid">${panel('Read availability', item('State', connectionState(source)[0]) + item('Retained approved messages', claims), source.status.toUpperCase())}${panel('Scope', item('Observation scope', source.scope ?? 'Not established'), 'BOUNDED')}${panel('Coherence', item('Cross-owner snapshot', 'Not guaranteed') + item('Freshness', 'Not established'), 'NO JOIN')}</div></div>${panel('Spatial evidence boundary', note('No authorized scene geometry', 'BodyPose provides source-backed position and orientation values, not body geometry. This view does not construct meshes, animate bodies, or infer a complete World scene.'), 'NO SCENE')}<div data-observation-region="claims">${claimsSection(source, {title: 'Owner publications · not a composite World snapshot'})}</div>${panel('Interpretation boundary', guide(['Each claim retains its own semantic authority, identity, source time and lineage.', 'World commit status is not inferred from delivery sequence.', 'BodyPose values and scalar-field samples are not joined by shared names, values, frames or arrival order.']), 'READ ONLY')}`;
     case '/spatial':
-      return `${panel('Spatial evidence', note('No authorized scene geometry in this slice', 'BodyPose position and orientation are shown only as source values. This M1 slice does not construct meshes, infer shape, animate bodies, or combine frames across claims.'), 'NO SCENE')}<div data-observation-region="claims">${claimsSection(source, {title: 'Spatially relevant owner claims'})}</div>`;
+      return `<div data-observation-region="markers">${spatialMarkers(source)}</div>${panel('Spatial evidence boundary', note('No authorized scene geometry in this slice', 'Markers show only independent source coordinate values. This M1 slice does not construct meshes, infer shape, animate bodies, or combine frames across claims.'), 'NO SCENE')}<div data-observation-region="claims">${claimsSection(source, {title: 'Spatially relevant owner claims'})}</div>`;
     case '/timeline':
       return `${panel('Causal history', note('Historical timeline not supported', 'The current-view endpoint is bounded and in-memory. Its local delivery sequence is not World causal time and cannot reconstruct committed-cut history.'), 'NO HISTORY')}<div data-observation-region="claims">${claimsSection(source, {title: 'Current messages · not a timeline'})}</div>`;
     case '/sensorimotor':
