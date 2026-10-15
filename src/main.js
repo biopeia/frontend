@@ -3,6 +3,7 @@ import {createSnapshotRefresh} from './snapshot-refresh.js';
 import {createObservationStore} from './observation-store.js';
 import {createPresentationScheduler} from './presentation-scheduler.js';
 import {renderScreen} from './views.js';
+import {mountSpatialExplorer} from './spatial-renderer.js';
 import './style.css';
 import {ROUTES, initialSource, routeFromPath} from './model.js';
 
@@ -149,6 +150,10 @@ function renderObservationScreen(route, source, {replaceRoute = false} = {}) {
   if (selectedText && screen.contains(selectedText.anchorNode) && screen.contains(selectedText.focusNode)) {
     const bound = (node, offset) => Math.min(offset, node.nodeType === Node.TEXT_NODE ? node.length : node.childNodes.length);
     window.getSelection()?.setBaseAndExtent(selectedText.anchorNode, bound(selectedText.anchorNode, selectedText.anchorOffset), selectedText.focusNode, bound(selectedText.focusNode, selectedText.focusOffset));
+  }
+  if (route.path === '/spatial') {
+    const spatial = screen?.querySelector('#spatial-explorer');
+    if (spatial && !spatial.dataset.mounted) { spatial.dataset.mounted = 'pending'; mountSpatialExplorer(spatial).then(()=>{spatial.dataset.mounted='true';}).catch(()=>{spatial.textContent='Spatial descriptor validation failed; no geometry rendered.';spatial.dataset.mounted='true';}); }
   }
   if (window.scrollY !== scrollY) window.scrollTo(window.scrollX, scrollY);
 }

@@ -51,73 +51,25 @@ test('all seven peer routes render without inventing a World or run join', () =>
   }
 });
 
-test('spatial screens show source pose values but do not fabricate geometry', () => {
+test('Spatial Explorer exposes a separate renderer slot but current claims cannot populate geometry', () => {
   const overview = renderScreen(ROUTES.find(route => route.path === '/overview'), availableSource);
   const spatial = renderScreen(ROUTES.find(route => route.path === '/spatial'), availableSource);
   assert.match(overview, /No authorized scene geometry/);
-  assert.match(spatial, /No authorized scene geometry/);
-  assert.match(spatial, /Position · m/);
-  assert.match(spatial, /1\.00000, 2\.00000, 3\.00000/);
-  assert.match(spatial, /coordinate-marker-panel/);
-  assert.doesNotMatch(spatial, /<canvas|<mesh|animated body/i);
+  assert.match(spatial, /id=\"spatial-explorer\"/);
+  assert.match(spatial, /Current Observation contract has no spatial geometry families/);
+  assert.match(spatial, /embodiment\.body_pose/);
+  assert.doesNotMatch(spatial, /environment\.finite_scalar_field/);
+  assert.doesNotMatch(spatial, /coordinate-marker-panel|<canvas|<mesh|animated body/i);
 });
 
-test('spatial explorer renders separate coordinate markers for each authorized M1 claim', () => {
-  const html = renderScreen(ROUTES.find(route => route.path === '/spatial'), {...availableSource, claims: [bodyPose, scalarField]});
-  assert.equal((html.match(/coordinate-marker-panel/g) ?? []).length, 2);
-  assert.match(html, /embodiment\.body_pose/);
-  assert.match(html, /environment\.finite_scalar_field/);
-  assert.match(html, /<figure[^>]+aria-label="Independent coordinate marker/);
-  assert.match(html, /Reference frame: <strong>world/);
-  assert.match(html, /Body frame: <strong>root/);
-  assert.match(html, /Reference frame: <strong>environment-local/);
-  assert.match(html, /Identity: body=body-7/);
-  assert.match(html, /Source context: world\.world_causal_tick = 12/);
-  assert.match(html, /Source lineage: embodiment_state_sha256:/);
-  assert.match(html, /Z coordinate · m/);
-  assert.match(html, /Separate owner claims; no shared scene or coordinate join/);
-  assert.match(html, /Auto-scaled independently for presentation only; not a physical scale/);
-  assert.doesNotMatch(html, /<canvas|<mesh|animated body/i);
-});
-
-test('spatial marker follows changed source coordinates without changing the independent panel', () => {
-  const moved = {...bodyPose, value: {...bodyPose.value, position: {...bodyPose.value.position, value: [-3, 0.5, 8]}}};
-  const html = renderScreen(ROUTES.find(route => route.path === '/spatial'), {...availableSource, claims: [moved]});
-  assert.match(html, /data-coordinate-x="-3" data-coordinate-y="0\.5" data-coordinate-z="8"/);
-  const [, cx, cy] = html.match(/<circle cx="([\d.]+)" cy="([\d.]+)"/);
-  assert.ok(Math.abs(Number(cx) - 45.21739130434783) < 1e-9);
-  assert.ok(Math.abs(Number(cy) - 107.53623188405797) < 1e-9);
-  const baselineHtml = renderScreen(ROUTES.find(route => route.path === '/spatial'), {...availableSource, claims: [bodyPose]});
-  assert.notEqual(cx, baselineHtml.match(/<circle cx="([\d.]+)"/)[1]);
-  assert.match(html, /Z coordinate · m[\s\S]*8\.00000/);
-});
-
-test('coordinate marker maps finite source XY into its own bounded plot and suppresses malformed values', () => {
-  const route = ROUTES.find(route => route.path === '/spatial');
-  const extreme = {...bodyPose, value: {...bodyPose.value, position: {...bodyPose.value.position, value: [-1e12, 1e12, 0]}}};
-  const html = renderScreen(route, {...availableSource, claims: [extreme]});
-  const [cx, cy] = html.match(/<circle cx="([\d.]+)" cy="([\d.]+)"/).slice(1).map(Number);
-  assert.ok(cx >= 34 && cx <= 206);
-  assert.ok(cy >= 34 && cy <= 206);
-
-  for (const coordinates of [[1, 2], [1, Infinity, 3], ['1', 2, 3]]) {
-    const invalid = {...bodyPose, value: {...bodyPose.value, position: {...bodyPose.value.position, value: coordinates}}};
-    const invalidHtml = renderScreen(route, {...availableSource, claims: [invalid]});
-    assert.doesNotMatch(invalidHtml, /coordinate-marker-panel/);
-  }
-});
-
-test('stale spatial marker is retained only with explicit stale label', () => {
-  const html = renderScreen(ROUTES.find(route => route.path === '/spatial'), {...availableSource, status: 'stale', stale: true});
-  assert.match(html, /LAST KNOWN · STALE/);
-  assert.match(html, /not a current Observation view/);
-  assert.match(html, /coordinate-marker-panel/);
-});
-
-test('unsupported or empty spatial scope renders no coordinate marker', () => {
-  const html = renderScreen(ROUTES.find(route => route.path === '/spatial'), {...initialSource, status: 'empty'});
-  assert.doesNotMatch(html, /coordinate-marker-panel/);
-  assert.match(html, /No authorized coordinate values available/);
+test('Spatial Explorer keeps stale and empty status explicit without presenting source claims as geometry', () => {
+  const stale = renderScreen(ROUTES.find(route => route.path === '/spatial'), {...availableSource, status: 'stale', stale: true});
+  assert.match(stale, /LAST KNOWN · STALE/);
+  assert.match(stale, /not a current Observation view/);
+  assert.doesNotMatch(stale, /coordinate-marker-panel|<canvas/);
+  const empty = renderScreen(ROUTES.find(route => route.path === '/spatial'), {...initialSource, status: 'empty'});
+  assert.match(empty, /No approved claims retained/);
+  assert.doesNotMatch(empty, /coordinate-marker-panel|<canvas/);
 });
 
 test('claim display preserves identity, authority, frame, source time, lineage and local delivery sequence', () => {
