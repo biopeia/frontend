@@ -173,12 +173,14 @@ async function readBoundedBody(response, limit) {
   return new TextDecoder().decode(bytes);
 }
 
-export async function fetchCurrentObservation({fetchImpl = globalThis.fetch, endpoint = '/api/observation/current', maxBytes = MAX_RESPONSE_BYTES} = {}) {
+export async function fetchCurrentObservation({fetchImpl = globalThis.fetch, endpoint = '/api/observation/current', maxBytes = MAX_RESPONSE_BYTES, signal} = {}) {
   if (typeof fetchImpl !== 'function' || endpoint !== '/api/observation/current') throw new ObservationReadError('unsupported', 'Unsupported Observation read endpoint');
   let response;
   try {
-    response = await fetchImpl(endpoint, {method: 'GET', headers: {Accept: 'application/json'}, cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(2000)});
-  } catch {
+    const timeout = AbortSignal.timeout(2000);
+    response = await fetchImpl(endpoint, {method: 'GET', headers: {Accept: 'application/json'}, cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout});
+  } catch (error) {
+    if (signal?.aborted) throw error;
     throw new ObservationReadError('disconnected', 'Observation bridge is unavailable');
   }
   if (response.status === 403) throw new ObservationReadError('denied', 'Observation read was denied');
