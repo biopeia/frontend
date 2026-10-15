@@ -172,8 +172,11 @@ try {
   }
 } finally {
   socket?.close();
-  if (browser && browser.exitCode === null) browser.kill('SIGTERM');
+  if (browser && browser.exitCode === null) {
+    browser.kill('SIGTERM');
+    await once(browser, 'exit').catch(() => {});
+  }
   frontend.close();
   await once(frontend, 'close').catch(() => {});
-  if (!process.env.FRONTEND_BROWSER_PROFILE) await rm(browserProfile, {recursive: true, force: true});
+  if (!process.env.FRONTEND_BROWSER_PROFILE) await rm(browserProfile, {recursive: true, force: true, maxRetries: 10, retryDelay: 25});
 }
