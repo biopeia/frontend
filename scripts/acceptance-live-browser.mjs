@@ -103,7 +103,7 @@ try {
     if (lastStatus.includes('Current view available')) { connectedAt = new Date().toISOString(); break; }
     // Model an explicit operator refresh while waiting for the bridge to become live;
     // do not wait for the app's one-second automatic refresh timer during a short run.
-    if (lastStatus.includes('Observation unavailable')) {
+    if (['Observation unavailable', 'No retained messages', 'No supported messages'].some(status => lastStatus.includes(status))) {
       await evaluate("document.querySelector('#refresh')?.click()");
     }
     await new Promise(resolve => setTimeout(resolve, 50));
