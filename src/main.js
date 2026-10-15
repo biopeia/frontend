@@ -8,6 +8,7 @@ const app = document.getElementById('app');
 const initialTheme = localStorage.getItem('biopeia-theme');
 let theme = initialTheme === 'light' || initialTheme === 'dark' ? initialTheme : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 let source = initialSource;
+let session = {status:'unknown'};
 let menuOpen = false;
 
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -18,6 +19,11 @@ function statusText() {
     empty: 'No retained messages', unsupported: 'No supported messages', denied: 'Read denied',
     unavailable: 'Observation unavailable', disconnected: 'Bridge disconnected', error: 'Invalid response',
   })[source.status] ?? 'Availability unknown';
+}
+function sessionPanel() {
+  const labels = {running:'World session active', completed:'World session completed', stopped:'World session stopped', failed:'World session failed', unknown:'World session status unknown'};
+  const cut = Number.isInteger(session.last_verified_committed_tick) ? ` · last confirmed tick ${session.last_verified_committed_tick}` : '';
+  return `<div class="notice" role="status" aria-live="polite"><strong>${labels[session.status] ?? labels.unknown}</strong><span>${session.world_id ? `${escapeHtml(session.world_id)} · ${escapeHtml(session.run_id ?? '')}` : 'Lifecycle is separate from Observation connection and read availability.'}${escapeHtml(cut)}</span></div>`;
 }
 function notice() {
   const messages = {
@@ -58,7 +64,7 @@ function render() {
   document.documentElement.dataset.theme = theme;
   document.title = `${route.label} · Biopeia`;
   const loading = source.status === 'loading';
-  app.innerHTML = `<a class="skip-link" href="#content">Skip to main content</a><div class="app-shell">${sidebar(route)}<div class="app-main"><header class="topbar"><button type="button" class="menu-button" id="menu" aria-label="Toggle navigation" aria-expanded="${menuOpen}">☰</button><span>Independent observation workspace</span><div class="top-actions"><span class="connection-indicator" aria-live="polite">● ${escapeHtml(statusText())}</span>${lastChecked()}<button id="refresh" type="button" aria-label="Refresh current Observation snapshot">${loading?'Reading…':'Refresh read'}</button><button id="theme" type="button" aria-label="Switch to ${theme==='light'?'dark':'light'} theme">${theme==='light'?'Dark':'Light'} theme</button></div></header><main id="content" tabindex="-1"><div class="page-heading"><div><div class="eyebrow">BIOPEIA / OBSERVATION</div><h1>${escapeHtml(route.title)}</h1><p>${escapeHtml(route.intro)}</p></div><span class="mode-chip">READ ONLY · M1</span></div>${notice()}${screen(route)}<footer>Biopeia · Independent passive presentation · No causal controls · No experimental evidence admission</footer></main></div></div>`;
+  app.innerHTML = `<a class="skip-link" href="#content">Skip to main content</a><div class="app-shell">${sidebar(route)}<div class="app-main"><header class="topbar"><button type="button" class="menu-button" id="menu" aria-label="Toggle navigation" aria-expanded="${menuOpen}">☰</button><span>Independent observation workspace</span><div class="top-actions"><span class="connection-indicator" aria-live="polite">● ${escapeHtml(statusText())}</span>${lastChecked()}<button id="refresh" type="button" aria-label="Refresh current Observation snapshot">${loading?'Reading…':'Refresh read'}</button><button id="theme" type="button" aria-label="Switch to ${theme==='light'?'dark':'light'} theme">${theme==='light'?'Dark':'Light'} theme</button></div></header><main id="content" tabindex="-1"><div class="page-heading"><div><div class="eyebrow">BIOPEIA / OBSERVATION</div><h1>${escapeHtml(route.title)}</h1><p>${escapeHtml(route.intro)}</p></div><span class="mode-chip">READ ONLY · M1</span></div>${sessionPanel()}${notice()}${screen(route)}<footer>Biopeia · Independent passive presentation · No causal controls · No experimental evidence admission</footer></main></div></div>`;
   app.querySelectorAll('a[data-nav]').forEach(el=>el.addEventListener('click',e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||e.button!==0)return;e.preventDefault();history.pushState({},'',el.getAttribute('href'));menuOpen=false;render();document.getElementById('content').focus();}));
   app.querySelector('#theme').addEventListener('click',()=>{theme=theme==='dark'?'light':'dark';localStorage.setItem('biopeia-theme',theme);render();});
   app.querySelector('#menu').addEventListener('click',()=>{menuOpen=!menuOpen;render();});
@@ -83,3 +89,15 @@ const refreshController = createSnapshotRefresh({
 window.addEventListener('popstate',()=>{menuOpen=false;render();});
 render();
 refreshController.start();
+async function refreshSession() {
+  try {
+    const response = await fetch('/api/session/status', {headers:{Accept:'application/json'}, cache:'no-store'});
+    if (!response.ok) throw new Error('session status unavailable');
+    const value = await response.json();
+    if (!['running','completed','stopped','failed'].includes(value.status)) throw new Error('invalid session status');
+    const next = value;
+    if (JSON.stringify(next) !== JSON.stringify(session)) { session = next; render(); }
+  } catch { if (session.status !== 'unknown') { session = {status:'unknown'}; render(); } }
+}
+void refreshSession();
+window.setInterval(() => void refreshSession(), 1000);

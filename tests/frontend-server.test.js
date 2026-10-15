@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer as createHttpServer} from 'node:http';
 import {once} from 'node:events';
+import {mkdtemp, writeFile, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {createFrontendServer, FRONTEND_CURRENT_PATH, parseLocalBridgeUrl} from '../scripts/frontend-server.js';
 
 async function listen(server) {
@@ -103,4 +106,38 @@ test('static app CSP permits only same-origin client reads', async t => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-security-policy'), /connect-src 'self'/);
   assert.doesNotMatch(response.headers.get('content-security-policy'), /connect-src 'none'/);
+});
+
+test('M1 session status exposes only lifecycle fields and remains separate from Observation', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'biopeia-m1-'));
+  const dir = join(base, '.local', 'm1', 'sessions');
+  await (await import('node:fs/promises')).mkdir(dir, {recursive:true});
+  t.after(() => rm(dir, {recursive: true, force: true}));
+  const file = join(dir, '123e4567-e89b-12d3-a456-426614174000.json');
+  await writeFile(file, JSON.stringify({schema_version:1,run_id:'123e4567-e89b-12d3-a456-426614174000',world_id:'world.test',status:'completed',created_at:12,ended_at:14,last_verified_committed_tick:9,commit_id:'c9',pid:444,state_root:'/secret',error:'secret'}));
+  const frontend = createFrontendServer({root:new URL('../', import.meta.url).pathname, sessionStatusFile:file});
+  t.after(() => close(frontend));
+  const port = await listen(frontend), origin = `http://127.0.0.1:${port}`;
+  const response = await fetch(`${origin}/api/session/status`, {headers:{Origin:origin}});
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {run_id:'123e4567-e89b-12d3-a456-426614174000',world_id:'world.test',status:'completed',created_at:12,ended_at:14,last_verified_committed_tick:9,commit_id:'c9'});
+  await writeFile(file, JSON.stringify({schema_version:1,run_id:'123e4567-e89b-12d3-a456-426614174000',world_id:'world.test',status:'completed',last_verified_committed_tick:-1}));
+  const malformed = await fetch(`${origin}/api/session/status`, {headers:{Origin:origin}});
+  assert.equal(malformed.status, 200);
+  assert.equal(Object.hasOwn(await malformed.json(), 'last_verified_committed_tick'), false);
+});
+
+test('M1 session status with a dead World identity is unavailable, not reported active', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'biopeia-m1-stale-'));
+  const dir = join(base, '.local', 'm1', 'sessions');
+  await (await import('node:fs/promises')).mkdir(dir, {recursive:true});
+  t.after(() => rm(base, {recursive: true, force: true}));
+  const file = join(dir, '123e4567-e89b-12d3-a456-426614174000.json');
+  await writeFile(file, JSON.stringify({schema_version:1,run_id:'123e4567-e89b-12d3-a456-426614174000',world_id:'world.test',status:'running',pid:2147483647,process_identity:'stale'}));
+  const frontend = createFrontendServer({root:new URL('../', import.meta.url).pathname, sessionStatusFile:file});
+  t.after(() => close(frontend));
+  const port = await listen(frontend), origin = `http://127.0.0.1:${port}`;
+  const response = await fetch(`${origin}/api/session/status`, {headers:{Origin:origin}});
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {error:'session_status_unavailable'});
 });
