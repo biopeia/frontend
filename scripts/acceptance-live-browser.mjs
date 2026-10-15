@@ -101,6 +101,11 @@ try {
       }
     }
     if (lastStatus.includes('Current view available')) { connectedAt = new Date().toISOString(); break; }
+    // Model an explicit operator refresh while waiting for the bridge to become live;
+    // do not wait for the app's one-second automatic refresh timer during a short run.
+    if (lastStatus.includes('Observation unavailable')) {
+      await evaluate("document.querySelector('#refresh')?.click()");
+    }
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   if (!connectedAt) throw new Error(`Browser did not connect to the live current-view bridge; last UI status=${JSON.stringify(lastStatus)}`);
