@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.server
 import json
 import os
 import signal
@@ -10,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import tomllib
+import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -74,6 +76,52 @@ except (OSError, subprocess.CalledProcessError) as error:
     raise RuntimeError(f"Browser acceptance prerequisites unavailable: {error}") from error
 
 profile_sha = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+
+class RelayHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    upstream: str | None = None
+
+    def do_GET(self) -> None:
+        if (self.path != "/v1/current" or
+                self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}" or
+                self.headers.get("Origin") != frontend_origin):
+            self.send_error(404)
+            return
+        target = RelayHandler.upstream
+        if target is None:
+            payload = b'{"error":"observation_bridge_unavailable"}'
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        request = urllib.request.Request(target, headers={"Origin": frontend_origin, "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                payload = response.read(1_000_001)
+                status = response.status
+                content_type = response.headers.get("Content-Type", "application/json")
+        except urllib.error.HTTPError as error:
+            payload, status, content_type = error.read(1_000_001), error.code, "application/json"
+        except OSError:
+            payload, status, content_type = b'{"error":"observation_bridge_unavailable"}', 503, "application/json"
+        if len(payload) > 1_000_000:
+            payload, status = b'{"error":"current_view_exceeds_response_limit"}', 413
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self) -> None:
+        self.send_error(405)
+
+    def log_message(self, *_: object) -> None:
+        pass
+
 with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
     state_parent = Path(temporary)
     state_root = state_parent / "world-state"
@@ -97,18 +145,42 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
             time.sleep(0.05)
     if not chrome_port:
         raise RuntimeError("Prestarted Chrome did not publish its DevTools endpoint")
+    relay = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RelayHandler)
+    relay_thread = threading.Thread(target=relay.serve_forever, daemon=True)
+    relay_thread.start()
+    relay_url = f"http://127.0.0.1:{relay.server_port}/v1/current"
+    browser_ready_path = state_parent / "browser-ready.json"
+    browser_env = {
+        **os.environ,
+        "FRONTEND_ROOT": str(frontend),
+        "FRONTEND_BRIDGE_URL": relay_url,
+        "FRONTEND_ORIGIN": frontend_origin,
+        "CHROME_BIN": chrome_bin,
+        "BROWSER_READY_PATH": str(browser_ready_path),
+        "CHROME_CDP_URL": f"http://127.0.0.1:{chrome_port}",
+    }
+    browser_process = subprocess.Popen(
+        ["node", str(frontend / "scripts/acceptance-live-browser.mjs")],
+        cwd=frontend, env=browser_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    page_deadline = time.monotonic() + 15
+    while time.monotonic() < page_deadline and not browser_ready_path.is_file():
+        if browser_process.poll() is not None:
+            out, err = browser_process.communicate()
+            raise RuntimeError(f"Prestarted browser/page failed ({browser_process.returncode}):\n{out}\n{err}")
+        time.sleep(0.05)
+    if not browser_ready_path.is_file():
+        raise RuntimeError("Real browser page did not attach before World startup")
+    browser_attached_at = json.loads(browser_ready_path.read_text(encoding="utf-8"))["browser_page_attached_at_utc"]
     command = [str(bridge_bin), "--profile", str(profile_path), "--state-root", str(state_root), "--cycles", "20"]
     world_process = subprocess.Popen(command, cwd=world, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     world_events: list[dict[str, object]] = []
     event_times: dict[int, str] = {}
-    browser_process: subprocess.Popen[str] | None = None
     browser_stdout: str | None = None
     browser_stderr: str | None = None
     browser_result: dict[str, object] | None = None
     terminal: dict[str, object] | None = None
     started_at = utc_now()
-    browser_ready_path = state_parent / "browser-ready.json"
-    browser_attached_at: str | None = None
     try:
         assert world_process.stdout is not None
         for line in world_process.stdout:
@@ -119,6 +191,7 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
             world_events.append(record)
             if record.get("event") == "ready":
                 bridge_url = str(record.get("observation_bridge", "")) + "/v1/current"
+                RelayHandler.upstream = bridge_url
                 request = urllib.request.Request(bridge_url, headers={"Origin": "http://attacker.invalid"})
                 try:
                     urllib.request.urlopen(request, timeout=2)
@@ -128,28 +201,6 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
                 else:
                     raise RuntimeError("Observation bridge accepted a foreign Origin")
 
-                browser_env = {
-                    **os.environ,
-                    "FRONTEND_ROOT": str(frontend),
-                    "FRONTEND_BRIDGE_URL": bridge_url,
-                    "FRONTEND_ORIGIN": frontend_origin,
-                    "CHROME_BIN": chrome_bin,
-                    "BROWSER_READY_PATH": str(browser_ready_path),
-                    "CHROME_CDP_URL": f"http://127.0.0.1:{chrome_port}",
-                }
-                browser_process = subprocess.Popen(
-                    ["node", str(frontend / "scripts/acceptance-live-browser.mjs")],
-                    cwd=frontend, env=browser_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                )
-                deadline = time.monotonic() + 15
-                while time.monotonic() < deadline and not browser_ready_path.is_file():
-                    if browser_process.poll() is not None:
-                        out, err = browser_process.communicate()
-                        raise RuntimeError(f"Browser exited before attaching to the live bridge ({browser_process.returncode}):\n{out}\n{err}")
-                    time.sleep(0.05)
-                if not browser_ready_path.is_file():
-                    raise RuntimeError("Real browser did not attach to the live bridge before timeout")
-                browser_attached_at = json.loads(browser_ready_path.read_text(encoding="utf-8"))["browser_page_attached_at_utc"]
             if record.get("event") == "cycle_committed":
                 tick = record.get("last_verified_committed_tick")
                 if not isinstance(tick, int):
@@ -180,6 +231,8 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
         if chrome_process.poll() is None:
             os.killpg(chrome_process.pid, signal.SIGTERM)
             chrome_process.wait(timeout=10)
+        relay.shutdown()
+        relay.server_close()
 
 if browser_result is None or terminal is None:
     raise RuntimeError("Acceptance result was incomplete")
