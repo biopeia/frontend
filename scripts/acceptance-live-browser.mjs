@@ -58,10 +58,12 @@ try {
   let nextId = 0;
   const pending = new Map();
   const requests = [];
+  const responses = [];
   const consoleErrors = [];
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
     if (message.method === 'Network.requestWillBeSent') requests.push({url: message.params.request.url, method: message.params.request.method});
+    if (message.method === 'Network.responseReceived') responses.push({url: message.params.response.url, status: message.params.response.status});
     if (message.method === 'Runtime.exceptionThrown') consoleErrors.push(message.params.exceptionDetails?.text || 'uncaught browser exception');
     if (message.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(message.params.type)) consoleErrors.push(message.params.args.map(arg => arg.value || arg.description || '').join(' '));
     if (!message.id) return;
@@ -84,13 +86,18 @@ try {
   await send('Runtime.enable');
   await send('Network.enable');
   await send('Page.navigate', {url: origin + '/overview'});
-  if (process.env.BROWSER_READY_PATH) {
-    await writeFile(process.env.BROWSER_READY_PATH, JSON.stringify({browser_page_attached_at_utc: new Date().toISOString()}), {flag: 'wx'});
-  }
   let connectedAt;
+  let pageAttachedAt;
   let lastStatus = '';
   for (let i = 0; i < 1200; i += 1) {
     lastStatus = await evaluate("document.querySelector('.connection-indicator')?.innerText || ''");
+    const preWorld503 = responses.find(response => response.url === origin + '/api/observation/current' && response.status === 503);
+    if (!pageAttachedAt && preWorld503) {
+      pageAttachedAt = new Date().toISOString();
+      if (process.env.BROWSER_READY_PATH) {
+        await writeFile(process.env.BROWSER_READY_PATH, JSON.stringify({browser_page_attached_at_utc: pageAttachedAt, pre_world_unavailable_read: true}), {flag: 'wx'});
+      }
+    }
     if (lastStatus.includes('Current view available')) { connectedAt = new Date().toISOString(); break; }
     await new Promise(resolve => setTimeout(resolve, 50));
   }
@@ -152,7 +159,7 @@ try {
   const screenshotSha256 = createHash('sha256').update(screenshotBytes).digest('hex');
   await writeFile(join(profile, 'm1-live-browser.png'), screenshotBytes);
   console.log('M1_LIVE_BROWSER_RESULT=' + JSON.stringify({status: 'PASS', browser_version: version.Browser,
-    frontend_origin: origin, browser_attached_at_utc: connectedAt, distinct_rendered_ticks: ticks,
+    frontend_origin: origin, browser_attached_at_utc: pageAttachedAt, first_live_read_at_utc: connectedAt, distinct_rendered_ticks: ticks,
     snapshots, polls, approved_claim_families: ['embodiment.body_pose', 'environment.finite_scalar_field'],
     read_requests: apiReads, non_same_origin_requests: foreign, read_only_gets: true,
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));

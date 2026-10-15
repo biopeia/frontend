@@ -171,7 +171,10 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
         time.sleep(0.05)
     if not browser_ready_path.is_file():
         raise RuntimeError("Real browser page did not attach before World startup")
-    browser_attached_at = json.loads(browser_ready_path.read_text(encoding="utf-8"))["browser_page_attached_at_utc"]
+    browser_ready = json.loads(browser_ready_path.read_text(encoding="utf-8"))
+    if browser_ready.get("pre_world_unavailable_read") is not True:
+        raise RuntimeError("Browser page was not proven to have polled the relay before World startup")
+    browser_attached_at = browser_ready["browser_page_attached_at_utc"]
     command = [str(bridge_bin), "--profile", str(profile_path), "--state-root", str(state_root), "--cycles", "20"]
     world_process = subprocess.Popen(command, cwd=world, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     world_events: list[dict[str, object]] = []
