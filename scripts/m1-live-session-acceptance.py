@@ -369,11 +369,14 @@ unavailable_result = json.loads(unavailable_lines[0].split("=", 1)[1])
 
 report = {
     "status": "PASS",
+    "acceptance_command": "npm run acceptance:m1:live",
+    "browser_launch_command": [chrome_bin, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", "--remote-allow-origins=*", "<isolated-temporary-user-data-dir>", "about:blank"],
     "command": command,
     "started_at_utc": started_at,
     "frontend_sha": frontend_sha,
     "world_sha": source_revisions["world"],
     "source_revisions": {name: source_revisions[name] for name in ["organism", "embodiment", "environment", "modality", "observation"]},
+    "source_pins": pins,
     "source_checkout_heads": source_checkout_heads,
     "source_pin_available_in_checkout": {name: True for name in pins},
     "profile_id": next((event.get("profile_id") for event in world_events if event.get("event") == "ready"), None),
