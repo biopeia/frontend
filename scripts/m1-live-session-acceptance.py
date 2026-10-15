@@ -76,16 +76,20 @@ except (OSError, subprocess.CalledProcessError) as error:
     raise RuntimeError(f"Browser acceptance prerequisites unavailable: {error}") from error
 
 profile_sha = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+relay_observations: list[dict[str, object]] = []
 
 class RelayHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     upstream: str | None = None
 
     def do_GET(self) -> None:
+        received = {"path": self.path, "host": self.headers.get("Host"), "origin": self.headers.get("Origin"), "at_utc": utc_now()}
+        relay_observations.append(received)
         if (self.path != "/v1/current" or
                 self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}" or
                 self.headers.get("Origin") != frontend_origin):
             self.send_error(404)
+            received["status"] = 404
             return
         target = RelayHandler.upstream
         if target is None:
@@ -96,6 +100,7 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+            received["status"] = 503
             return
         request = urllib.request.Request(target, headers={"Origin": frontend_origin, "Accept": "application/json"})
         try:
@@ -115,8 +120,10 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+        received.update({"status": status, "bytes": len(payload)})
 
     def do_POST(self) -> None:
+        relay_observations.append({"method": "POST", "path": self.path, "status": 405, "at_utc": utc_now()})
         self.send_error(405)
 
     def log_message(self, *_: object) -> None:
@@ -216,7 +223,7 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
             raise RuntimeError("World never emitted ready; browser was not started")
         browser_stdout, browser_stderr = browser_process.communicate(timeout=70)
         if browser_process.returncode != 0:
-            raise RuntimeError(f"Live browser failed ({browser_process.returncode}):\n{browser_stdout}\n{browser_stderr}")
+            raise RuntimeError(f"Live browser failed ({browser_process.returncode}); relay={relay_observations}; world_events={world_events}; browser={browser_stdout}\n{browser_stderr}")
         lines = [line for line in browser_stdout.splitlines() if line.startswith("M1_LIVE_BROWSER_RESULT=")]
         if len(lines) != 1:
             raise RuntimeError(f"Browser did not emit exactly one machine result: {browser_stdout}")
