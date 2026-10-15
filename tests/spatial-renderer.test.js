@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {validateEnvironmentDescriptor,validateEmbodimentDescriptor,validateBoundPose} from '../src/spatial-renderer.js';
+import {validateEnvironmentDescriptor,validateEmbodimentDescriptor,validateBoundPose,jointMarkerStates} from '../src/spatial-renderer.js';
 import * as spatialRenderer from '../src/spatial-renderer.js';
 
 const frame={frame_id:'env.frame',parent_frame_id:'world',origin_m:[0,0,0],x_axis_in_parent:[1,0,0],y_axis_in_parent:[0,1,0],z_axis_in_parent:[0,0,1],handedness:'RIGHT_HANDED',up_axis:'Z'};
@@ -36,6 +36,19 @@ test('binds physical poses only to the exact authored morphology and committed W
  assert.equal(validateBoundPose(embodiment,{...pose,candidate:{...pose.candidate,render_geometry_sha256:'0'.repeat(64)}}).ok,false);
  assert.equal(validateBoundPose(embodiment,{...pose,world_association:{...pose.world_association,committed_cut:{...pose.world_association.committed_cut,causal_tick:18}}}).ok,false);
  assert.equal(validateBoundPose(embodiment,{...pose,candidate:{...pose.candidate,poses:[]}}).ok,false);
+});
+test('places only topology-origin markers from an exactly available parent pose, never a child pose',()=>{
+ const morphology={...embodiment,joints:[{joint_id:'joint.root-carrier',parent_link_id:'body.root',child_link_id:'body.carrier',joint_type:'revolute',joint_origin_in_parent_m:[1,0,0],axis_in_joint_frame:[0,0,1]}]};
+ const pose=[{segment_id:'body.root',translation_m:[1,2,3],orientation_xyzw:[0,0,Math.SQRT1_2,Math.SQRT1_2]}];
+ const [state]=jointMarkerStates(morphology,pose);
+ assert.equal(state.joint_id,'joint.root-carrier');
+ assert.equal(state.available,true);
+ state.position_m.forEach((value,index)=>assert.ok(Math.abs(value-[1,3,3][index])<1e-12));
+ assert.equal('child_pose' in state,false);
+});
+test('reports a topology-only joint marker unavailable when its parent link has no render pose',()=>{
+ const morphology={...embodiment,joints:[{joint_id:'joint.carrier-tip',parent_link_id:'body.carrier',child_link_id:'body.tip',joint_type:'revolute',joint_origin_in_parent_m:[0,0,0],axis_in_joint_frame:[0,0,1]}]};
+ assert.deepEqual(jointMarkerStates(morphology,[{segment_id:'body.root',translation_m:[0,0,0],orientation_xyzw:[0,0,0,1]}]),[{joint_id:'joint.carrier-tip',available:false,reason:'parent link pose unavailable'}]);
 });
 test('accepts topology-only carrier links without fabricating renderable segments',async()=>{
  const candidate={...embodiment,joints:[{joint_id:'joint.root-carrier',parent_link_id:'body.root',child_link_id:'body.carrier',joint_type:'revolute',joint_origin_in_parent_m:[0,0,0],axis_in_joint_frame:[0,0,1]}]};
