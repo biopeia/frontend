@@ -28,8 +28,30 @@ function valueDetails(claim) {
       item('Orientation · unit quaternion XYZW', vector(value.orientation.value_xyzw)) +
       item('Reference frame', value.reference_frame) + item('Body frame', value.body_frame);
   }
+  if (claim.family === 'environment.render_scene') {
+    return item('Environment', value.environment_id) + item('Environment revision', value.environment_revision) +
+      item('Geometry digest', value.render_geometry_sha256) + item('Length unit', value.length_unit) +
+      item('Coordinate frame', value.frame?.frame_id) + item('Authored geometry items', Array.isArray(value.items) ? value.items.length : 'Not available');
+  }
+  if (claim.family === 'embodiment.render_morphology') {
+    return item('Body', value.body_id) + item('Embodiment episode', value.embodiment_episode_id) +
+      item('Morphology revision', value.morphology_revision) + item('Geometry revision', value.geometry_revision) +
+      item('Geometry digest', value.render_geometry_sha256) + item('Coordinate system', value.coordinate_system) +
+      item('Authored segments', Array.isArray(value.segments) ? value.segments.length : 'Not available') +
+      item('Joints', Array.isArray(value.joints) ? value.joints.length : 'Not available');
+  }
+  if (claim.family === 'embodiment.render_link_pose') {
+    const candidate = value.candidate ?? {};
+    const cut = value.world_association?.committed_cut ?? {};
+    return item('Body', candidate.body_id) + item('Embodiment episode', candidate.embodiment_episode_id) +
+      item('Morphology / geometry revision', `${candidate.morphology_revision ?? 'Not available'} / ${candidate.geometry_revision ?? 'Not available'}`) +
+      item('Pose candidate source tick', candidate.source_causal_tick) + item('Pose candidate target tick', candidate.target_causal_tick) +
+      item('Associated committed World cut', `${cut.world_id ?? 'Not available'} · ${cut.causal_tick ?? 'Not available'} · ${cut.commit_id ?? 'Not available'}`) +
+      item('Physical step', candidate.physical_step_id) + item('Authored link poses', Array.isArray(candidate.poses) ? candidate.poses.length : 'Not available') +
+      item('Coordinate system · unit', `${candidate.coordinate_system ?? 'Not available'} · ${candidate.length_unit ?? 'Not available'}`);
+  }
   return item('Quantity kind', value.quantity_kind) + item('Value · unit 1', value.value) +
-    item('Declared range', `[${value.valid_range.join(', ')}]`) + item('Sample point · m', vector(value.point_m)) +
+    item('Declared range', Array.isArray(value.valid_range) ? `[${value.valid_range.join(', ')}]` : 'Not available') + item('Sample point · m', vector(value.point_m)) +
     item('Reference frame', value.reference_frame);
 }
 
@@ -147,12 +169,19 @@ export function renderScreen(route, source) {
   switch (route.path) {
     case '/worlds':
       return `${panel('Worlds & runs catalog', note('Catalog not supported by this contract', 'The local endpoint exposes a bounded current subset only. It does not provide World discovery, run enumeration, or a completeness guarantee.'), 'UNSUPPORTED')}<div data-observation-region="claims">${claimsSection(source, {title: 'Current owner publications'})}</div>`;
-    case '/overview':
-      return `<div data-observation-region="overview-metrics"><div class="metric-grid">${panel('Read availability', item('State', connectionState(source)[0]) + item('Retained approved messages', claims), source.status.toUpperCase())}${panel('Scope', item('Observation scope', source.scope ?? 'Not established'), 'BOUNDED')}${panel('Coherence', item('Cross-owner snapshot', 'Not guaranteed') + item('Freshness', 'Not established'), 'NO JOIN')}</div></div>${panel('Spatial evidence boundary', note('No authorized scene geometry', 'BodyPose provides source-backed position and orientation values, not body geometry. This view does not construct meshes, animate bodies, or infer a complete World scene.'), 'NO SCENE')}<div data-observation-region="claims">${claimsSection(source, {title: 'Owner publications · not a composite World snapshot'})}</div>${panel('Interpretation boundary', guide(['Each claim retains its own semantic authority, identity, source time and lineage.', 'World commit status is not inferred from delivery sequence.', 'BodyPose values and scalar-field samples are not joined by shared names, values, frames or arrival order.']), 'READ ONLY')}`;
-    case '/spatial':
+    case '/overview': {
+      const hasGeometry = source.claims.some(claim => ['environment.render_scene', 'embodiment.render_morphology'].includes(claim.family));
+      const boundary = hasGeometry
+        ? note('Owner geometry projections available', 'Authorized geometry descriptors are present in this bounded read. Environment and Embodiment remain separate; no shared physical scene or causal snapshot is implied.')
+        : note('No authorized scene geometry', 'BodyPose provides source-backed position and orientation values, not body geometry. This view does not construct meshes, animate bodies, or infer a complete World scene.');
+      return `<div data-observation-region="overview-metrics"><div class="metric-grid">${panel('Read availability', item('State', connectionState(source)[0]) + item('Retained approved messages', claims), source.status.toUpperCase())}${panel('Scope', item('Observation scope', source.scope ?? 'Not established'), 'BOUNDED')}${panel('Coherence', item('Cross-owner snapshot', 'Not guaranteed') + item('Freshness', 'Not established'), 'NO JOIN')}</div></div>${panel('Spatial evidence boundary', boundary, hasGeometry ? 'SEPARATE OWNER DATA' : 'NO SCENE')}<div data-observation-region="claims">${claimsSection(source, {title: 'Owner publications · not a composite World snapshot'})}</div>${panel('Interpretation boundary', guide(['Each claim retains its own semantic authority, identity, source time and lineage.', 'World commit status is not inferred from delivery sequence.', 'BodyPose values and scalar-field samples are not joined by shared names, values, frames or arrival order.']), 'READ ONLY')}`;
+    }
+    case '/spatial': {
       // Keep the renderer subtree outside snapshot-patched regions: replacing it
       // on every Observation refresh would reset its presentation-only camera.
-      return `<section class="panel"><div class="panel-heading"><h2>Spatial Explorer · owner projections</h2><span class="small-tag">READ ONLY · SEPARATE DOMAINS</span></div><div class="panel-body" id="spatial-explorer"></div></section>${panel('Spatial evidence boundary', note('Current Observation contract has no spatial geometry families', 'The renderer accepts only closed Environment and Embodiment owner projection shapes. This World M1 current-view source still exposes no such descriptors; no geometry or transform is inferred.'), 'UNAVAILABLE')}<div data-observation-region="claims">${claimsSection(source, {title: 'Spatially relevant owner claims'})}</div>`;
+      const hasSpatial = source.claims.some(claim => ['environment.render_scene','embodiment.render_morphology'].includes(claim.family));
+      return `<section class="panel"><div class="panel-heading"><h2>Spatial Explorer · owner projections</h2><span class="small-tag">READ ONLY · SEPARATE DOMAINS</span></div><div class="panel-body" id="spatial-explorer"></div></section>${panel('Spatial evidence boundary', `<p id="spatial-evidence-status" role="status">${source.stale ? 'Last validated spatial projections retained in memory · stale; current source availability is not established.' : source.status === 'available' && hasSpatial ? 'Current bounded Observation read; claims remain separate and no shared causal scene is implied.' : 'No validated spatial descriptor is present in the retained Observation subset.'}</p><p class="fine">Only uniquely identified, validated Environment and Embodiment geometry descriptors are rendered. Missing or ambiguous claims remain unavailable; no geometry or transform is inferred.</p>`, source.stale ? 'STALE · LAST KNOWN' : hasSpatial ? 'OWNER DATA' : 'UNAVAILABLE')}<div data-observation-region="claims">${claimsSection(source, {title: 'Spatially relevant owner claims'})}</div>`;
+    }
     case '/timeline':
       return `${panel('Causal history', note('Historical timeline not supported', 'The current-view endpoint is bounded and in-memory. Its local delivery sequence is not World causal time and cannot reconstruct committed-cut history.'), 'NO HISTORY')}<div data-observation-region="claims">${claimsSection(source, {title: 'Current messages · not a timeline'})}</div>`;
     case '/sensorimotor':

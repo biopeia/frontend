@@ -82,24 +82,100 @@ export async function validateEmbodimentDescriptor(value) {
   return {ok:true,value};
 }
 
-// The current observation contract carries no spatial descriptor families. This
-// mount is intentionally an adapter boundary, not an implicit data join.
-export async function mountSpatialExplorer(container, {environment=null, embodiment=null}={}) {
+// Mount only the spatial descriptor families validated by the current
+// Observation contract; owner projections remain separate and are not joined.
+export async function mountSpatialExplorer(container, {environment=null, embodiment=null, renderPose=null, environmentClaim=null, embodimentClaim=null, stale=false}={}) {
   const env=environment ? await validateEnvironmentDescriptor(environment) : fail('Environment projection not available in this Observation view.');
   const body=embodiment ? await validateEmbodimentDescriptor(embodiment) : fail('Embodiment projection not available in this Observation view.');
-  // A World cut-proof verifier is not integrated in this Frontend contract.
-  // Consequently this renderer accepts no dynamic pose input, regardless of a
-  // caller-supplied boolean/callback. A future trusted adapter must be specified
-  // and wired explicitly before dynamic transforms can be presented.
-  const dynamics=fail('Dynamic Embodiment poses unavailable: no World-owned cut verifier is integrated in this Frontend.');
-  container.innerHTML=`<div class="spatial-status" role="status">${env.ok||body.ok?'Partial owner projections available; domains are shown in separate coordinate views.':'Spatial geometry unavailable in the current Observation contract.'}</div><div class="spatial-view-grid">${viewMarkup('Environment static geometry',env.ok?`${escapeHtml(env.value.environment_id)} · ${escapeHtml(env.value.environment_revision)} · ${env.value.items.length} items · frame ${escapeHtml(env.value.frame.frame_id)} · m · right-handed · up ${escapeHtml(env.value.frame.up_axis)}`:`Unavailable · ${escapeHtml(env.reason)}`,env.ok?env.value.items.length:0,env.ok&&env.value.items.length>0,env.ok&&!env.value.items.length?'EMPTY':null)}${viewMarkup('Embodiment morphology',body.ok?`${escapeHtml(body.value.body_id)} · geometry ${escapeHtml(body.value.geometry_revision)} · ${body.value.segments.length} link-local boxes; transforms unavailable, so no body is drawn`:`Unavailable · ${escapeHtml(body.reason)}`,body.ok?body.value.segments.length:0,false)}</div><p class="fine">Owner projections remain independent; no shared frame or coherent World cut is implied. ${escapeHtml(dynamics.reason)}</p>`;
-  const canvases=container.querySelectorAll('.spatial-webgl');
-  if (env.ok) attachCamera(canvases[0], drawCanvas(canvases[0], env.value.items.map(item=>toZUp(item,env.value.frame.up_axis))));
-  // Environment is rendered only in its own declared frame. No body pose is
-  // available here, and no cross-domain frame composition is attempted.
-  return {environment:env, embodiment:body, dynamics};
+  const dynamics=body.ok&&renderPose ? validateBoundPose(body.value,renderPose) : fail('Dynamic Embodiment poses unavailable; no validated morphology-bound World cut was received.');
+  container.innerHTML=`<div class="spatial-status" role="status">${env.ok||body.ok?'Owner projections are shown only within their declared frames.':'Spatial geometry unavailable in the current Observation view.'}</div><div class="spatial-view-grid">${viewMarkup('Environment static geometry',env.ok?`${escapeHtml(env.value.environment_id)} · ${escapeHtml(env.value.environment_revision)} · ${env.value.items.length} items · frame ${escapeHtml(env.value.frame.frame_id)} · m · right-handed · up ${escapeHtml(env.value.frame.up_axis)}`:`Unavailable · ${escapeHtml(env.reason)}`,env.ok?env.value.items.length:0,env.ok&&env.value.items.length>0,env.ok&&!env.value.items.length?'EMPTY':null)}${viewMarkup('Embodiment morphology',body.ok?`${escapeHtml(body.value.body_id)} · episode ${escapeHtml(body.value.embodiment_episode_id)} · morphology ${escapeHtml(body.value.morphology_revision)} · geometry ${escapeHtml(body.value.geometry_revision)} · ${body.value.segments.length} authored segments${dynamics.ok?'':'; awaiting a matching committed pose'}`:`Unavailable · ${escapeHtml(body.reason)}`,body.ok?body.value.segments.length:0,Boolean(dynamics.ok),null,body.ok)}</div><p class="fine" id="joint-marker-status" role="status">${escapeHtml(jointMarkerSummary(body,dynamics,stale))}</p><section class="panel" aria-labelledby="spatial-selection-heading"><div class="panel-heading"><h2 id="spatial-selection-heading">Selected source item</h2><span class="small-tag">OWNER IDENTITY · PROVENANCE</span></div><div class="panel-body"><label for="spatial-item-selection">Select an authored geometry item</label><select id="spatial-item-selection"></select><div id="spatial-selection-details" role="status" aria-live="polite"></div><p class="fine">Selection inspects source-authored identity and provenance; it does not join Environment and Embodiment or infer physical placement.</p></div></section><p class="fine" id="spatial-pose-status" role="status">${poseStatus(dynamics,stale)} Environment and Embodiment remain separate; no common frame or joint scene is inferred.</p>`;
+  const environmentCanvas=container.querySelector('#environment-view'),bodyCanvas=container.querySelector('#embodiment-view');
+  if (env.ok) attachCamera(environmentCanvas, drawCanvas(environmentCanvas, env.value.items.map(item=>toZUp(item,env.value.frame.up_axis))));
+  let bodyRenderer=body.ok&&dynamics.ok?drawBodyCanvas(bodyCanvas,body.value,dynamics.value.candidate.poses):null;
+  let lastValidDynamics=dynamics.ok?dynamics:null;
+  if(bodyRenderer)attachCamera(bodyCanvas,bodyRenderer);
+  const updateSelection = attachSelection(container, {environment:env.ok?env.value:null, embodiment:body.ok?body.value:null, environmentClaim, embodimentClaim, dynamics, stale});
+  return {environment:env, embodiment:body, dynamics, updatePose(nextClaim,nextStale=false){
+    const next=body.ok&&nextClaim?validateBoundPose(body.value,nextClaim):fail('Dynamic Embodiment poses unavailable; no validated morphology-bound World cut was received.');
+    let message;
+    if(next.ok){
+      if(bodyRenderer)bodyRenderer.setPoses(next.value.candidate.poses);
+      else if(body.ok){bodyRenderer=drawBodyCanvas(container.querySelector('#embodiment-view'),body.value,next.value.candidate.poses);if(bodyRenderer)attachCamera(container.querySelector('#embodiment-view'),bodyRenderer);}
+      lastValidDynamics=next;message=poseStatus(next,nextStale);
+    } else {
+      message=lastValidDynamics?.ok?`New pose withheld; last validated rendering retained · ${poseStatus(lastValidDynamics,true)} ${escapeHtml(next.reason)}`:poseStatus(next,nextStale);
+    }
+    const status=container.querySelector('#spatial-pose-status');if(status)status.textContent=`${message} Environment and Embodiment remain separate; no common frame or joint scene is inferred.`;
+    const markerStatus=container.querySelector('#joint-marker-status');if(markerStatus)markerStatus.textContent=jointMarkerSummary(body,next.ok?next:lastValidDynamics,nextStale||!next.ok);
+    updateSelection.updatePose(next,nextStale);
+    return next;
+  }, updateProvenance(nextEnvironmentClaim,nextEmbodimentClaim){
+    updateSelection.updateProvenance(nextEnvironmentClaim,nextEmbodimentClaim);
+  }};
 }
-function viewMarkup(title, detail, count, renderable,emptyState=null){const id=title.startsWith('Environment')?'environment-view':'embodiment-view';return `<section class="panel spatial-owner-panel"><div class="panel-heading"><h2>${title}</h2><span class="small-tag">${emptyState??(count?(renderable?'OWNER DATA':'PARTIAL · NOT PLACED'):'UNAVAILABLE')}</span></div><p class="fine">${detail}</p>${renderable?`<div class="spatial-camera" aria-label="Presentation-only camera controls"><button type="button" data-camera="left" data-view="${id}" aria-label="Rotate ${title} view left">Rotate left</button><button type="button" data-camera="right" data-view="${id}" aria-label="Rotate ${title} view right">Rotate right</button><button type="button" data-camera="tilt-up" data-view="${id}" aria-label="Tilt ${title} view up">Tilt up</button><button type="button" data-camera="tilt-down" data-view="${id}" aria-label="Tilt ${title} view down">Tilt down</button><button type="button" data-camera="zoom-in" data-view="${id}" aria-label="Zoom ${title} view in">Zoom in</button><button type="button" data-camera="zoom-out" data-view="${id}" aria-label="Zoom ${title} view out">Zoom out</button><button type="button" data-camera="reset" data-view="${id}" aria-label="Reset ${title} view">Reset</button></div><div class="spatial-canvas-wrap"><canvas id="${id}" class="spatial-webgl" aria-label="${title}; source-owned geometry; presentation-only viewport" role="img"></canvas></div>`:''}<p class="fine">${count?`${count} owner-authored primitive(s); this view does not establish physical or cross-domain placement.`:emptyState==='EMPTY'?'The valid descriptor contains no Environment geometry.':'No geometry is synthesized.'}</p></section>`;}
+function attachSelection(container, {environment, embodiment, environmentClaim, embodimentClaim, dynamics, stale}) {
+  const selector=container.querySelector('#spatial-item-selection'), details=container.querySelector('#spatial-selection-details');
+  if(!selector||!details)return {updatePose(){},updateProvenance(){}};
+  const options=[];
+  for(const item of environment?.items??[]) options.push({key:`environment:${item.object_id}`,label:`Environment · ${item.object_id}`,kind:'environment',item,descriptor:environment,claim:environmentClaim});
+  for(const segment of embodiment?.segments??[]) options.push({key:`embodiment:${segment.segment_id}`,label:`Embodiment · ${segment.segment_id}`,kind:'embodiment',item:segment,descriptor:embodiment,claim:embodimentClaim});
+  if(!options.length){const option=document.createElement('option');option.value='';option.textContent='No authored geometry item is available';selector.append(option);selector.disabled=true;details.textContent='No item identity can be selected from the current owner projections.';return {updatePose(){},updateProvenance(){}};}
+  for(const record of options){const option=document.createElement('option');option.value=record.key;option.textContent=record.label;selector.append(option);}
+  function show(){
+    const record=options.find(option=>option.key===selector.value)??options[0];
+    const observation=record.claim?.observation??{};
+    const fields=[
+      ['Owner authority',record.kind==='environment'?'Environment':'Embodiment'],
+      ['Item identity',record.kind==='environment'?record.item.object_id:record.item.segment_id],
+      ['Descriptor identity',record.kind==='environment'?`${record.descriptor.environment_id} · ${record.descriptor.environment_revision}`:`${record.descriptor.body_id} · ${record.descriptor.embodiment_episode_id}`],
+      ['Morphology / geometry revision',record.kind==='embodiment'?`${record.descriptor.morphology_revision} · ${record.descriptor.geometry_revision}`:'Not applicable'],
+      ['Geometry digest',record.descriptor.render_geometry_sha256],
+      ['Shape · authored dimensions (m)',record.kind==='embodiment'?`${record.item.shape} · ${record.item.dimensions_m.join(', ')}`:record.item.kind],
+      ['Asserter',actorText(observation.asserter)],['Producer',actorText(observation.producer)],
+      ['Acquisition',observation.acquisition?.method??'Not available'],
+      ['Observation delivery sequence · not causal time',record.claim?.deliverySequence??'Not available'],
+      ['Source lineage',Array.isArray(observation.lineage?.parents)?observation.lineage.parents.map(parent=>`${parent.namespace}:${parent.reference}`).join('; ')||'Not supplied':'Not available'],
+      ['Source domain time',Array.isArray(observation.domain_time)?observation.domain_time.map(time=>`${time.domain}.${time.kind}=${time.value}`).join('; ')||'Not supplied':'Not available'],
+    ];
+    if(record.kind==='embodiment'){
+      const pose=dynamics.ok?dynamics.value.candidate.poses.find(value=>value.segment_id===record.item.segment_id):null;
+      const cut=dynamics.ok?dynamics.value.cut:null;
+      fields.push(['Declared joints · topology only',record.descriptor.joints.map(joint=>`${joint.joint_id}: ${joint.parent_link_id} → ${joint.child_link_id} (${joint.joint_type}, axis ${joint.axis_in_joint_frame.join(', ')})`).join('; ')||'None declared']);
+      fields.push(['Dynamic pose',pose?`${stale?'Last known validated pose · stale':'Validated in current bounded read · source freshness not established'}; World ${dynamics.value.candidate.source_world_id}; cut ${cut.causal_tick} · ${cut.commit_id}; position ${pose.translation_m.join(', ')} m`:'Not available for this selected segment']);
+      fields.push(['Joint visualization limit',record.descriptor.joints.length?jointMarkerStates(record.descriptor,dynamics.ok?dynamics.value.candidate.poses:[]).map(state=>`${state.joint_id}: ${state.available?'topology-only origin marker available; no child pose or joint motion inferred':`origin marker unavailable · ${state.reason}`}`).join('; '):'No joints declared']);
+    }
+    details.replaceChildren(...fields.map(([label,value])=>{const row=document.createElement('p');row.className='property';const name=document.createElement('span');name.textContent=label;const content=document.createElement('strong');content.textContent=String(value);row.append(name,content);return row;}));
+  }
+  selector.value=options[0].key;selector.addEventListener('change',show);show();
+  return {
+    updatePose(nextDynamics,nextStale) { dynamics=nextDynamics; stale=nextStale; show(); },
+    updateProvenance(nextEnvironmentClaim,nextEmbodimentClaim) {
+      for (const record of options) record.claim=record.kind==='environment'?nextEnvironmentClaim:nextEmbodimentClaim;
+      show();
+    },
+  };
+}
+function actorText(value){return value?`${value.kind}: ${value.identifier}`:'Not available';}
+export function validateBoundPose(morphology,claim){
+  const candidate=claim?.candidate,association=claim?.world_association,cut=association?.committed_cut;
+  if(!candidate||!cut||candidate.body_id!==morphology.body_id||candidate.embodiment_episode_id!==morphology.embodiment_episode_id||candidate.morphology_revision!==morphology.morphology_revision||candidate.geometry_revision!==morphology.geometry_revision||candidate.render_geometry_sha256!==morphology.render_geometry_sha256||candidate.target_causal_tick!==cut.causal_tick||candidate.source_world_id!==cut.world_id||association.association_kind!=='transient_current_committed_cut')return fail('Embodiment pose withheld: morphology identity, geometry digest or committed World cut does not match.');
+  const expected=[...morphology.segments.map(item=>item.segment_id)].sort();
+  const actual=[...candidate.poses.map(item=>item.segment_id)].sort();
+  if(expected.length!==actual.length||expected.some((id,index)=>id!==actual[index]))return fail('Embodiment pose withheld: transforms do not exactly cover the authored renderable segments.');
+  return {ok:true,value:{candidate,cut}};
+}
+function poseStatus(dynamics,stale){
+  if(!dynamics.ok)return escapeHtml(dynamics.reason);
+  const {candidate,cut}=dynamics.value;
+  return `${stale?'Last known validated pose · stale':'Validated in current bounded read · source freshness not established'} · World ${escapeHtml(candidate.source_world_id)} · committed cut ${cut.causal_tick} · ${escapeHtml(cut.commit_id)}.`;
+}
+function jointMarkerSummary(body,dynamics,stale=false){
+  if(!body.ok)return 'Topology-only joint-origin markers unavailable: no validated morphology is present.';
+  if(!body.value.joints.length)return 'No authored joints are declared; no joint markers are rendered.';
+  const states=dynamics.ok?jointMarkerStates(body.value,dynamics.value.candidate.poses):jointMarkerStates(body.value,[]);
+  return `Topology-only joint-origin markers${stale?' · last validated pose, stale':''} (not child poses or articulated motion): ${states.map(state=>`${state.joint_id} · ${state.available?'marker available':'marker unavailable · '+state.reason}`).join('; ')}.`;
+}
+function viewMarkup(title, detail, count, renderable,emptyState=null,canvasSlot=renderable){const id=title.startsWith('Environment')?'environment-view':'embodiment-view';return `<section class="panel spatial-owner-panel"><div class="panel-heading"><h2>${title}</h2><span class="small-tag">${emptyState??(count?(renderable?'OWNER DATA':'PARTIAL · NOT PLACED'):'UNAVAILABLE')}</span></div><p class="fine">${detail}</p>${canvasSlot?`<div class="spatial-camera" aria-label="Presentation-only camera controls"><button type="button" data-camera="left" data-view="${id}" aria-label="Rotate ${title} view left">Rotate left</button><button type="button" data-camera="right" data-view="${id}" aria-label="Rotate ${title} view right">Rotate right</button><button type="button" data-camera="tilt-up" data-view="${id}" aria-label="Tilt ${title} view up">Tilt up</button><button type="button" data-camera="tilt-down" data-view="${id}" aria-label="Tilt ${title} view down">Tilt down</button><button type="button" data-camera="zoom-in" data-view="${id}" aria-label="Zoom ${title} view in">Zoom in</button><button type="button" data-camera="zoom-out" data-view="${id}" aria-label="Zoom ${title} view out">Zoom out</button><button type="button" data-camera="pan-left" data-view="${id}" aria-label="Pan ${title} view left">Pan left</button><button type="button" data-camera="pan-right" data-view="${id}" aria-label="Pan ${title} view right">Pan right</button><button type="button" data-camera="pan-up" data-view="${id}" aria-label="Pan ${title} view up">Pan up</button><button type="button" data-camera="pan-down" data-view="${id}" aria-label="Pan ${title} view down">Pan down</button><button type="button" data-camera="reset" data-view="${id}" aria-label="Reset ${title} view">Reset</button></div><div class="spatial-canvas-wrap"><canvas id="${id}" class="spatial-webgl" aria-label="${title}; source-owned geometry; presentation-only viewport" role="img"></canvas></div>`:''}<p class="fine">${count?`${count} owner-authored primitive(s); this view does not establish physical or cross-domain placement.`:emptyState==='EMPTY'?'The valid descriptor contains no Environment geometry.':'No geometry is synthesized.'}</p></section>`;}
 function escapeHtml(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 function toZUp(item,up){
@@ -128,29 +204,65 @@ function primitiveMesh(item) {
   }
   return new Float32Array(out);
 }
+function drawBodyCanvas(canvas,morphology,poses){
+  if(!canvas)return null;
+  const gl=canvas.getContext('webgl',{alpha:true,antialias:true});if(!gl)return failCanvas(canvas,'WebGL is unavailable; body geometry was not rendered.');
+  const vs=`attribute vec3 p;uniform float angle;uniform float pitch;uniform float scale;uniform vec3 center;uniform vec3 translation;uniform vec4 orientation;uniform vec2 pan;uniform float markerMode;vec3 qrotate(vec4 q,vec3 v){return v+2.0*cross(q.xyz,cross(q.xyz,v)+q.w*v);}void main(){vec3 q=qrotate(orientation,p)+translation-center;float c=cos(angle),s=sin(angle);float x=c*q.x-s*q.y;float y=s*q.x+c*q.y;float cp=cos(pitch),sp=sin(pitch);float viewY=cp*y-sp*q.z;float viewZ=sp*y+cp*q.z;gl_Position=vec4(x*scale+pan.x,viewY*scale+pan.y,-viewZ*scale,1.0);gl_PointSize=markerMode>.5?10.0:1.0;}`;
+  const fs=`precision mediump float;uniform float markerMode;void main(){gl_FragColor=markerMode>.5?vec4(1.0,.72,.16,1.0):vec4(.34,.72,.95,1.0);}`;
+  const shader=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error('body shader failed');return s;};
+  const program=gl.createProgram();try{gl.attachShader(program,shader(gl.VERTEX_SHADER,vs));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fs));gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))return failCanvas(canvas,'WebGL body renderer could not initialize.');}catch{return failCanvas(canvas,'WebGL body renderer could not initialize.');}
+  const poseById=new Map(poses.map(pose=>[pose.segment_id,pose]));
+  const meshes=morphology.segments.map(segment=>({segment,pose:poseById.get(segment.segment_id),data:primitiveMesh(segment)}));
+  if(meshes.some(mesh=>!mesh.pose||!mesh.data.length||[...mesh.data,...mesh.pose.translation_m,...mesh.pose.orientation_xyzw].some(n=>!finite(n)||!f32(n))))return failCanvas(canvas,'Morphology-bound pose is incomplete or outside renderable range.');
+  const rotate=rotateByQuaternion;
+  const markers=jointMarkerStates(morphology,poses).filter(marker=>marker.available);
+  const bounds=[[Infinity,-Infinity],[Infinity,-Infinity],[Infinity,-Infinity]];
+  for(const {data,pose} of meshes)for(let i=0;i<data.length;i+=3){const v=rotate(pose.orientation_xyzw,[data[i],data[i+1],data[i+2]]).map((n,j)=>n+pose.translation_m[j]);for(let j=0;j<3;j++){bounds[j][0]=Math.min(bounds[j][0],v[j]);bounds[j][1]=Math.max(bounds[j][1],v[j]);}}
+  for(const marker of markers)for(let j=0;j<3;j++){bounds[j][0]=Math.min(bounds[j][0],marker.position_m[j]);bounds[j][1]=Math.max(bounds[j][1],marker.position_m[j]);}
+  const center=bounds.map(([lo,hi])=>(lo+hi)/2),extent=Math.max(...bounds.map(([lo,hi])=>hi-lo),1e-9);if(!center.every(finite)||!finite(extent)||!finite(2/extent))return failCanvas(canvas,'Pose bounds cannot be represented safely.');
+  const dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.max(1,canvas.clientWidth*dpr);canvas.height=Math.max(1,canvas.clientHeight*dpr);gl.viewport(0,0,canvas.width,canvas.height);gl.useProgram(program);
+  const loc=gl.getAttribLocation(program,'p'),angleLoc=gl.getUniformLocation(program,'angle'),pitchLoc=gl.getUniformLocation(program,'pitch'),scaleLoc=gl.getUniformLocation(program,'scale'),panLoc=gl.getUniformLocation(program,'pan'),centerLoc=gl.getUniformLocation(program,'center'),translationLoc=gl.getUniformLocation(program,'translation'),orientationLoc=gl.getUniformLocation(program,'orientation'),markerModeLoc=gl.getUniformLocation(program,'markerMode');
+  const buffers=meshes.map(mesh=>{const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,mesh.data,gl.STATIC_DRAW);return {...mesh,buffer};});
+  gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);let camera={angle:-.55,pitch:.52,zoom:1,panX:0,panY:0};
+  const markerBuffer=markers.length?gl.createBuffer():null;
+  const render=()=>{gl.clearColor(.035,.055,.08,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.uniform1f(angleLoc,camera.angle);gl.uniform1f(pitchLoc,camera.pitch);gl.uniform1f(scaleLoc,1.25/extent*camera.zoom);gl.uniform2f(panLoc,camera.panX,camera.panY);gl.uniform3f(centerLoc,...center);gl.uniform1f(markerModeLoc,0);for(const mesh of buffers){gl.bindBuffer(gl.ARRAY_BUFFER,mesh.buffer);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);gl.uniform3f(translationLoc,...mesh.pose.translation_m);gl.uniform4f(orientationLoc,...mesh.pose.orientation_xyzw);gl.drawArrays(gl.TRIANGLES,0,mesh.data.length/3);}if(markerBuffer){const positions=jointMarkerStates(morphology,buffers.map(mesh=>({segment_id:mesh.segment.segment_id,...mesh.pose}))).filter(marker=>marker.available).flatMap(marker=>marker.position_m);gl.bindBuffer(gl.ARRAY_BUFFER,markerBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(positions),gl.DYNAMIC_DRAW);gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);gl.uniform3f(translationLoc,0,0,0);gl.uniform4f(orientationLoc,0,0,0,1);gl.uniform1f(markerModeLoc,1);gl.drawArrays(gl.POINTS,0,positions.length/3);}};
+  render();return {setPoses(nextPoses){const map=new Map(nextPoses.map(pose=>[pose.segment_id,pose]));if(map.size!==buffers.length||buffers.some(mesh=>!map.has(mesh.segment.segment_id)))return false;for(const mesh of buffers)mesh.pose=map.get(mesh.segment.segment_id);render();return true;},adjust(action){if(action==='left')camera.angle-=.18;else if(action==='right')camera.angle+=.18;else if(action==='tilt-up')camera.pitch=Math.min(1.35,camera.pitch+.12);else if(action==='tilt-down')camera.pitch=Math.max(-1.35,camera.pitch-.12);else if(action==='zoom-in')camera.zoom=Math.min(8,camera.zoom*1.25);else if(action==='zoom-out')camera.zoom=Math.max(.2,camera.zoom/1.25);else if(action==='pan-left')camera.panX=Math.max(-1.5,camera.panX-.12);else if(action==='pan-right')camera.panX=Math.min(1.5,camera.panX+.12);else if(action==='pan-up')camera.panY=Math.min(1.5,camera.panY+.12);else if(action==='pan-down')camera.panY=Math.max(-1.5,camera.panY-.12);else if(action==='reset')camera={angle:-.55,pitch:.52,zoom:1,panX:0,panY:0};render();}};
+}
+function rotateByQuaternion(q,v){const [x,y,z,w]=q,uv=[y*v[2]-z*v[1],z*v[0]-x*v[2],x*v[1]-y*v[0]],uuv=[y*uv[2]-z*uv[1],z*uv[0]-x*uv[2],x*uv[1]-y*uv[0]];return v.map((n,i)=>n+2*(w*uv[i]+uuv[i]));}
+/** Topological joint-origin markers only; no child transform or joint motion is derived. */
+export function jointMarkerStates(morphology,poses){
+  const poseById=new Map((poses??[]).map(pose=>[pose.segment_id,pose]));
+  return morphology.joints.map(joint=>{
+    const parentPose=poseById.get(joint.parent_link_id);
+    if(!parentPose||!Array.isArray(parentPose.translation_m)||!Array.isArray(parentPose.orientation_xyzw))return {joint_id:joint.joint_id,available:false,reason:'parent link pose unavailable'};
+    const position_m=rotateByQuaternion(parentPose.orientation_xyzw,joint.joint_origin_in_parent_m).map((n,i)=>n+parentPose.translation_m[i]);
+    if(position_m.length!==3||position_m.some(n=>!finite(n)||!f32(n)))return {joint_id:joint.joint_id,available:false,reason:'transformed parent-frame origin is not renderable'};
+    return {joint_id:joint.joint_id,available:true,position_m};
+  });
+}
 function drawCanvas(canvas, items) {
   if(!items.length||!canvas) return null;
   const gl=canvas.getContext('webgl',{alpha:true,antialias:true}); if(!gl) return failCanvas(canvas,'WebGL is unavailable; geometry was not rendered.');
   const dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.max(1,canvas.clientWidth*dpr);canvas.height=Math.max(1,canvas.clientHeight*dpr);gl.viewport(0,0,canvas.width,canvas.height);
-  const vs=`attribute vec3 p; uniform float angle; uniform float pitch; uniform float scale; uniform vec3 center; void main(){vec3 q=p-center;float c=cos(angle),s=sin(angle);float x=c*q.x-s*q.y;float y=s*q.x+c*q.y;float cp=cos(pitch),sp=sin(pitch);float viewY=cp*y-sp*q.z;float viewZ=sp*y+cp*q.z;gl_Position=vec4(x*scale,viewY*scale,-viewZ*scale,1.0);}`;
+  const vs=`attribute vec3 p; uniform float angle; uniform float pitch; uniform float scale; uniform vec3 center; uniform vec2 pan; void main(){vec3 q=p-center;float c=cos(angle),s=sin(angle);float x=c*q.x-s*q.y;float y=s*q.x+c*q.y;float cp=cos(pitch),sp=sin(pitch);float viewY=cp*y-sp*q.z;float viewZ=sp*y+cp*q.z;gl_Position=vec4(x*scale+pan.x,viewY*scale+pan.y,-viewZ*scale,1.0);}`;
   const fs=`precision mediump float; uniform vec4 color; void main(){gl_FragColor=color;}`;
   const shader=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw Error('WebGL shader failed');return s;};
   const program=gl.createProgram();
   try { gl.attachShader(program,shader(gl.VERTEX_SHADER,vs));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fs));gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))return failCanvas(canvas,'WebGL renderer could not initialize; geometry was not rendered.'); }
   catch { return failCanvas(canvas,'WebGL renderer could not initialize; geometry was not rendered.'); }
-  gl.useProgram(program);const loc=gl.getAttribLocation(program,'p'),angleLoc=gl.getUniformLocation(program,'angle'),pitchLoc=gl.getUniformLocation(program,'pitch'),scaleLoc=gl.getUniformLocation(program,'scale'),color=gl.getUniformLocation(program,'color'),centerLoc=gl.getUniformLocation(program,'center');
+  gl.useProgram(program);const loc=gl.getAttribLocation(program,'p'),angleLoc=gl.getUniformLocation(program,'angle'),pitchLoc=gl.getUniformLocation(program,'pitch'),scaleLoc=gl.getUniformLocation(program,'scale'),panLoc=gl.getUniformLocation(program,'pan'),color=gl.getUniformLocation(program,'color'),centerLoc=gl.getUniformLocation(program,'center');
   const meshes=items.map(item=>({item,data:primitiveMesh(item)})).filter(mesh=>mesh.data.length);
   if(!meshes.length||meshes.some(mesh=>{for(const n of mesh.data)if(!Number.isFinite(n)||!f32(n))return true;return false;})) return failCanvas(canvas,'Geometry exceeds the renderable numeric range; this projection was withheld.');
   const bounds=[[Infinity,-Infinity],[Infinity,-Infinity],[Infinity,-Infinity]];
   for(const mesh of meshes) for(let i=0;i<mesh.data.length;i++) { const axis=i%3,n=mesh.data[i];bounds[axis][0]=Math.min(bounds[axis][0],n);bounds[axis][1]=Math.max(bounds[axis][1],n); }
   const center=bounds.map(([lo,hi])=>(lo+hi)/2), extent=Math.max(...bounds.map(([lo,hi])=>hi-lo),1e-9);
   if(!center.every(finite)||!finite(extent)||extent<=0||!finite(2.0/extent)) return failCanvas(canvas,'Geometry bounds cannot be represented safely; this projection was withheld.');
-  let camera={angle:-.55,pitch:.52,zoom:1};
+  let camera={angle:-.55,pitch:.52,zoom:1,panX:0,panY:0};
   const buffers=meshes.map(({item,data})=>{const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);return {item,data,buffer};});
   gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);
-  const render=()=>{gl.clearColor(.035,.055,.08,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.uniform1f(angleLoc,camera.angle);gl.uniform1f(pitchLoc,camera.pitch);gl.uniform1f(scaleLoc,1.25/extent*camera.zoom);gl.uniform3f(centerLoc,...center);for(const {item,data,buffer} of buffers){gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);gl.uniform4f(color,item.kind==='ground_plane'?.25:.34,item.kind==='sphere'?.72:.66,item.kind==='sphere'?.95:.82,1);gl.drawArrays(gl.TRIANGLES,0,data.length/3);}};
+  const render=()=>{gl.clearColor(.035,.055,.08,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.uniform1f(angleLoc,camera.angle);gl.uniform1f(pitchLoc,camera.pitch);gl.uniform1f(scaleLoc,1.25/extent*camera.zoom);gl.uniform2f(panLoc,camera.panX,camera.panY);gl.uniform3f(centerLoc,...center);for(const {item,data,buffer} of buffers){gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);gl.uniform4f(color,item.kind==='ground_plane'?.25:.34,item.kind==='sphere'?.72:.66,item.kind==='sphere'?.95:.82,1);gl.drawArrays(gl.TRIANGLES,0,data.length/3);}};
   render();
-  return {adjust(action){if(action==='left')camera.angle-=.18;else if(action==='right')camera.angle+=.18;else if(action==='tilt-up')camera.pitch=Math.min(1.35,camera.pitch+.12);else if(action==='tilt-down')camera.pitch=Math.max(-1.35,camera.pitch-.12);else if(action==='zoom-in')camera.zoom=Math.min(8,camera.zoom*1.25);else if(action==='zoom-out')camera.zoom=Math.max(.2,camera.zoom/1.25);else if(action==='reset')camera={angle:-.55,pitch:.52,zoom:1};render();}};
+  return {adjust(action){if(action==='left')camera.angle-=.18;else if(action==='right')camera.angle+=.18;else if(action==='tilt-up')camera.pitch=Math.min(1.35,camera.pitch+.12);else if(action==='tilt-down')camera.pitch=Math.max(-1.35,camera.pitch-.12);else if(action==='zoom-in')camera.zoom=Math.min(8,camera.zoom*1.25);else if(action==='zoom-out')camera.zoom=Math.max(.2,camera.zoom/1.25);else if(action==='pan-left')camera.panX=Math.max(-1.5,camera.panX-.12);else if(action==='pan-right')camera.panX=Math.min(1.5,camera.panX+.12);else if(action==='pan-up')camera.panY=Math.min(1.5,camera.panY+.12);else if(action==='pan-down')camera.panY=Math.max(-1.5,camera.panY-.12);else if(action==='reset')camera={angle:-.55,pitch:.52,zoom:1,panX:0,panY:0};render();}};
 }
 function failCanvas(canvas,message){const panel=canvas.closest('.spatial-owner-panel');const note=document.createElement('p');note.className='fine';note.setAttribute('role','status');note.textContent=message;panel?.append(note);const tag=panel?.querySelector('.small-tag');if(tag)tag.textContent='UNRENDERABLE';panel?.querySelector('.spatial-camera')?.remove();canvas.remove();return null;}
 function attachCamera(canvas, camera){if(!canvas||!camera)return;canvas.closest('.spatial-owner-panel')?.querySelectorAll('[data-camera]').forEach(button=>button.addEventListener('click',()=>camera.adjust(button.dataset.camera)));}

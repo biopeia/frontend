@@ -4,6 +4,7 @@ import {createObservationStore} from './observation-store.js';
 import {createPresentationScheduler} from './presentation-scheduler.js';
 import {renderScreen} from './views.js';
 import {mountSpatialExplorer} from './spatial-renderer.js';
+import {createSpatialRenderController} from './spatial-render-controller.js';
 import './style.css';
 import {ROUTES, initialSource, routeFromPath} from './model.js';
 
@@ -13,6 +14,7 @@ let theme = initialTheme === 'light' || initialTheme === 'dark' ? initialTheme :
 let session = {status:'unknown'};
 let menuOpen = false;
 let shellMounted = false;
+const spatialRenderController = createSpatialRenderController({mount: mountSpatialExplorer});
 
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function getRoute() { return routeFromPath(location.pathname); }
@@ -153,9 +155,34 @@ function renderObservationScreen(route, source, {replaceRoute = false} = {}) {
   }
   if (route.path === '/spatial') {
     const spatial = screen?.querySelector('#spatial-explorer');
-    if (spatial && !spatial.dataset.mounted) { spatial.dataset.mounted = 'pending'; mountSpatialExplorer(spatial).then(()=>{spatial.dataset.mounted='true';}).catch(()=>{spatial.textContent='Spatial descriptor validation failed; no geometry rendered.';spatial.dataset.mounted='true';}); }
+    if (spatial) {
+      const environmentClaim = singleSpatialClaimRecord(source, 'environment.render_scene');
+      const embodimentClaim = singleSpatialClaimRecord(source, 'embodiment.render_morphology');
+      const environment = environmentClaim?.value ?? null;
+      const embodiment = embodimentClaim?.value ?? null;
+      const renderPose = singleSpatialClaim(source, 'embodiment.render_link_pose');
+      // Mount is asynchronous (digest validation and WebGL setup). Reconcile
+      // the newest view once it resolves rather than dropping refreshes while
+      // initialization is in flight. Detached route nodes are never updated.
+      spatialRenderController.reconcile(spatial, {environment, embodiment, renderPose, environmentClaim, embodimentClaim, stale:source.stale, status:source.status});
+      const evidence = screen.querySelector('#spatial-evidence-status');
+      const hasSpatial = Boolean(environment || embodiment);
+      if (evidence) evidence.textContent = source.stale
+        ? 'Last validated spatial projections retained in memory · stale; current source availability is not established.'
+        : source.status === 'available' && hasSpatial
+          ? 'Current bounded Observation read; claims remain separate and no shared causal scene is implied.'
+          : 'No validated spatial descriptor is present in the retained Observation subset.';
+    }
   }
   if (window.scrollY !== scrollY) window.scrollTo(window.scrollX, scrollY);
+}
+function singleSpatialClaim(source, family) {
+  const matches = source.claims.filter(claim => claim.family === family);
+  return matches.length === 1 ? matches[0].value : null;
+}
+function singleSpatialClaimRecord(source, family) {
+  const matches = source.claims.filter(claim => claim.family === family);
+  return matches.length === 1 ? matches[0] : null;
 }
 function renderShell(source) {
   const route = getRoute();

@@ -61,6 +61,9 @@ function validateObservation(message) {
   const approved = {
     'embodiment.body_pose': {authority: 'embodiment', contractId: 'embodiment.body_pose', revision: 'v1', kind: 'authoritative_state'},
     'environment.finite_scalar_field': {authority: 'environment', contractId: 'biopeia.environment.finite-scalar-field', revision: '1', kind: 'domain_derived'},
+    'environment.render_scene': {authority: 'environment', contractId: 'biopeia.environment.render-scene', revision: '1', kind: 'authoritative_state'},
+    'embodiment.render_morphology': {authority: 'embodiment', contractId: 'embodiment.render_morphology', revision: 'v1', kind: 'authoritative_state'},
+    'embodiment.render_link_pose': {authority: 'embodiment', contractId: 'embodiment.render_link_pose', revision: 'v1', kind: 'authoritative_state'},
   }[qualified];
   if (!approved) return null;
   if (family.authority !== approved.authority || contract.contract_id !== approved.contractId || contract.revision !== approved.revision || claim.epistemic_kind !== approved.kind) {
@@ -75,12 +78,16 @@ function validateObservation(message) {
   if (!isText(asserter.kind) || !isText(asserter.identifier) || !isText(producer.kind) || !isText(producer.identifier) || !isText(acquisition.method)) {
     throw new ObservationReadError('error', 'Malformed source provenance');
   }
-  const expectedProvenance = qualified === 'embodiment.body_pose'
-    ? {asserter: ['embodiment_owner_boundary', 'embodiment_owner_boundary'], producer: ['embodiment_owner_projection', 'embodiment_owner_projection'], acquisition: 'embodiment_owner_state_projection'}
-    : {asserter: ['environment_owner_boundary', 'environment.identified_finite_scalar_field'], producer: ['environment_projection', 'environment.identified_finite_scalar_field.project_observation'], acquisition: 'environment_field_evaluation'};
-  if (asserter.kind !== expectedProvenance.asserter[0] || asserter.identifier !== expectedProvenance.asserter[1] ||
+  const expectedProvenance = {
+    'embodiment.body_pose': {asserter: ['embodiment_owner_boundary', 'embodiment_owner_boundary'], producer: ['embodiment_owner_projection', 'embodiment_owner_projection'], acquisition: 'embodiment_owner_state_projection'},
+    'environment.finite_scalar_field': {asserter: ['environment_owner_boundary', 'environment.identified_finite_scalar_field'], producer: ['environment_projection', 'environment.identified_finite_scalar_field.project_observation'], acquisition: 'environment_field_evaluation'},
+    'embodiment.render_link_pose': {asserter: ['embodiment_owner_boundary', 'embodiment.owner_checkpoint'], producer: ['embodiment_owner_projection', 'embodiment.render_link_pose_candidate'], acquisition: 'embodiment_owner_render_pose_candidate'},
+    'environment.render_scene': {asserter: ['environment_owner_projection', 'owner_projection'], producer: ['environment_owner_projection', 'owner_projection'], acquisition: 'owner_projection'},
+    'embodiment.render_morphology': {asserter: ['embodiment_owner_projection', 'owner_projection'], producer: ['embodiment_owner_projection', 'owner_projection'], acquisition: 'owner_projection'},
+  }[qualified];
+  if (expectedProvenance && (asserter.kind !== expectedProvenance.asserter[0] || asserter.identifier !== expectedProvenance.asserter[1] ||
       producer.kind !== expectedProvenance.producer[0] || producer.identifier !== expectedProvenance.producer[1] ||
-      acquisition.method !== expectedProvenance.acquisition) {
+      acquisition.method !== expectedProvenance.acquisition)) {
     throw new ObservationReadError('error', 'Approved family source provenance mismatch');
   }
   if (!Array.isArray(observation.context_time) || !Array.isArray(observation.domain_time) || !Array.isArray(lineage.parents) ||
@@ -107,6 +114,93 @@ function validateObservation(message) {
     }
     validateTransformation(observation, 'embodiment.body_pose.project_observation', ['world_id', 'causal_tick', 'body_id', 'embodiment_episode_id', 'morphology_revision', 'reference_frame', 'body_frame']);
     return {deliverySequence: envelope.delivery_sequence, observation, family: qualified, identities, value};
+  }
+  if (qualified === 'environment.render_scene' || qualified === 'embodiment.render_morphology') {
+    const expected = qualified === 'environment.render_scene'
+      ? {subjectKind: 'environment', identityKinds: ['environment', 'environment_revision'], digest: value.render_geometry_sha256,
+        identityValues: {environment: value.environment_id, environment_revision: value.environment_revision}}
+      : {subjectKind: 'embodiment_body', identityKinds: ['body', 'embodiment_episode', 'morphology_revision', 'geometry_revision'], digest: value.render_geometry_sha256,
+        identityValues: {body: value.body_id, embodiment_episode: value.embodiment_episode_id, morphology_revision: value.morphology_revision, geometry_revision: value.geometry_revision}};
+    const sourceIdentities = validateIdentity(subject, expected.identityKinds);
+    if (subject.kind !== expected.subjectKind || !/^[a-f0-9]{64}$/.test(expected.digest ?? '') ||
+        sourceIdentities.length !== expected.identityKinds.length ||
+        expected.identityKinds.some(kind => sourceIdentities.find(item => item.kind === kind)?.value !== expected.identityValues[kind])) {
+      throw new ObservationReadError('error', 'Spatial descriptor identity does not match its owner projection');
+    }
+    if (lineage.parents.length !== 1 || lineage.parents[0].namespace !== 'render_geometry_sha256' || lineage.parents[0].reference !== expected.digest) {
+      throw new ObservationReadError('error', 'Spatial descriptor lineage does not bind its geometry digest');
+    }
+    const transformation = requireRecord(lineage.transformation, 'spatial descriptor transformation');
+    const config = transformation.effective_configuration;
+    if (transformation.transformation_id !== 'owner.static_render_projection' || transformation.revision !== '1') {
+      throw new ObservationReadError('error', 'Spatial descriptor transformation provenance is not an approved owner projection');
+    }
+    const keys = Object.keys(expected.identityValues);
+    // Bind rendered descriptors to the exact passive adapter envelope emitted by
+    // the approved owner projections. Preserve the rest of Observation lineage.
+    if (!Array.isArray(config) || config.length !== keys.length || keys.some(key => !config.some(pair => Array.isArray(pair) && pair[0] === key && pair[1] === expected.identityValues[key]))) {
+      throw new ObservationReadError('error', 'Spatial descriptor transformation does not match owner identity');
+    }
+    return {deliverySequence: envelope.delivery_sequence, observation, family: qualified, identities: sourceIdentities, value};
+  }
+  if (qualified === 'embodiment.render_link_pose') {
+    const candidate = requireRecord(value.candidate, 'render pose candidate');
+    const association = requireRecord(value.world_association, 'World cut association');
+    const cut = requireRecord(association.committed_cut, 'committed World cut');
+    const sourceIds = {body: candidate.body_id, embodiment_episode: candidate.embodiment_episode_id,
+      morphology_revision: candidate.morphology_revision, geometry_revision: candidate.geometry_revision};
+    const poseIdentities = validateIdentity(subject, Object.keys(sourceIds));
+    if (subject.kind !== 'embodiment_body' || poseIdentities.length !== 4 || Object.entries(sourceIds).some(([kind, id]) => poseIdentities.find(item => item.kind === kind)?.value !== id) ||
+        candidate.contract_revision !== 'embodiment.render_link_pose_candidate/v1' || candidate.coordinate_system !== 'right_handed_z_up' || candidate.length_unit !== 'm' ||
+        candidate.completeness !== 'complete' || !isText(candidate.source_world_id) || !isText(candidate.physical_step_id) || !isText(candidate.environment_revision) || !isText(candidate.solver_config_revision) ||
+        !Number.isSafeInteger(candidate.source_causal_tick) || candidate.target_causal_tick !== candidate.source_causal_tick + 1 ||
+        !Array.isArray(candidate.poses) || candidate.poses.length > 128 ||
+        !isText(cut.world_id) || cut.world_id !== candidate.source_world_id || !isText(cut.commit_id) ||
+        cut.causal_tick !== candidate.target_causal_tick || !Number.isSafeInteger(cut.causal_tick) ||
+        association.association_kind !== 'transient_current_committed_cut' || !/^[a-f0-9]{64}$/.test(candidate.render_geometry_sha256 ?? '')) {
+      throw new ObservationReadError('error', 'Render pose does not match its owner identity or World cut association');
+    }
+    const poseIds = new Set();
+    for (const pose of candidate.poses) {
+      if (!isRecord(pose) || Object.keys(pose).sort().join('|') !== 'orientation_xyzw|segment_id|translation_m' ||
+          !isText(pose.segment_id) || poseIds.has(pose.segment_id) || !finiteVector(pose.translation_m, 3) ||
+          !finiteVector(pose.orientation_xyzw, 4) || Math.abs(pose.orientation_xyzw.reduce((sum, part) => sum + part * part, 0) - 1) > 1e-5) {
+        throw new ObservationReadError('error', 'Render pose contains an invalid or duplicate segment transform');
+      }
+      poseIds.add(pose.segment_id);
+    }
+    if (!candidate.poses.length) throw new ObservationReadError('error', 'Render pose candidate contains no renderable transforms');
+    for (const time of observation.context_time) {
+      if (time.domain === 'world' && time.kind === 'world_causal_tick' && time.value !== cut.causal_tick) throw new ObservationReadError('error', 'Render pose World cut time mismatch');
+    }
+    if (!observation.context_time.some(time => time.domain === 'world' && time.kind === 'world_causal_tick' && time.value === cut.causal_tick) ||
+        lineage.parents.length !== 2 ||
+        !lineage.parents.some(parent => parent.namespace === 'embodiment_render_geometry_sha256' && parent.reference === candidate.render_geometry_sha256) ||
+        !lineage.parents.some(parent => parent.namespace === 'embodiment_owner_checkpoint_sha256' && /^[a-f0-9]{64}$/.test(parent.reference))) {
+      throw new ObservationReadError('error', 'Render pose is missing World cut or geometry lineage');
+    }
+    const checkpoint = requireRecord(association.owner_checkpoint_reference, 'Embodiment checkpoint reference');
+    const references = cut.owner_checkpoint_references;
+    const transformation = requireRecord(lineage.transformation, 'World cut association transformation');
+    const expectedConfig = {
+      world_id: cut.world_id,
+      causal_tick: String(cut.causal_tick),
+      commit_id: cut.commit_id,
+      checkpoint_id: checkpoint.checkpoint_id,
+      projection_sha256: association.projection_sha256,
+    };
+    const actualConfig = transformation.effective_configuration;
+    if (!Array.isArray(references) || !references.some(reference => reference?.owner === 'embodiment' && reference.owner_identity === candidate.body_id &&
+        reference.checkpoint_id === checkpoint.checkpoint_id && reference.sha256 === lineage.parents.find(parent => parent.namespace === 'embodiment_owner_checkpoint_sha256')?.reference) ||
+        checkpoint.owner !== 'embodiment' || checkpoint.owner_identity !== candidate.body_id ||
+        !/^[a-f0-9]{64}$/.test(checkpoint.sha256 ?? '') ||
+        !/^[a-f0-9]{64}$/.test(association.projection_sha256 ?? '') ||
+        transformation.transformation_id !== 'world.transient_associate_embodiment_render_pose' || transformation.revision !== '1' ||
+        !Array.isArray(actualConfig) || actualConfig.length !== Object.keys(expectedConfig).length ||
+        Object.entries(expectedConfig).some(([key, expectedValue]) => !actualConfig.some(pair => Array.isArray(pair) && pair[0] === key && pair[1] === expectedValue))) {
+      throw new ObservationReadError('error', 'Render pose World association lineage is inconsistent');
+    }
+    return {deliverySequence: envelope.delivery_sequence, observation, family: qualified, identities: poseIdentities, value};
   }
   const identities = validateIdentity(subject, ['environment', 'environment_resource']);
   if (value.quantity_kind !== 'dimensionless_scalar_field' || value.unit !== '1' || !Array.isArray(value.valid_range) ||
