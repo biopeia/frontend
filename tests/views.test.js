@@ -42,6 +42,24 @@ const scalarField = {
   },
 };
 
+function spatialClaim(family, value) {
+  const [authority, path] = family.split('.');
+  return {
+    deliverySequence: 10,
+    family,
+    identities: [{kind: 'body', value: 'body-7', issuer: {kind: `${authority}_owner_boundary`, identifier: `${authority}_owner_boundary`}}],
+    value,
+    observation: {
+      claim: {family: {authority, path: path.split('.'), contract: {contract_id: family, revision: 'v1'}}, epistemic_kind: 'authoritative_state'},
+      context_time: [{domain: 'world', kind: 'world_causal_tick', value: 18}],
+      lineage: {parents: [{namespace: 'owner_checkpoint_sha256', reference: 'c'.repeat(64)}]},
+      asserter: {kind: `${authority}_owner_boundary`, identifier: `${authority}_owner_boundary`},
+      producer: {kind: `${authority}_projection`, identifier: `${authority}_projection`},
+      acquisition: {method: `${authority}_owner_projection`},
+    },
+  };
+}
+
 test('all seven peer routes render without inventing a World or run join', () => {
   const html = ROUTES.map(route => renderScreen(route, availableSource));
   assert.equal(new Set(html).size, 7);
@@ -51,13 +69,14 @@ test('all seven peer routes render without inventing a World or run join', () =>
   }
 });
 
-test('Spatial Explorer exposes a separate renderer slot but current claims cannot populate geometry', () => {
+test('Spatial Explorer exposes an explicit status and separate renderer slot without fabricating geometry', () => {
   const overview = renderScreen(ROUTES.find(route => route.path === '/overview'), availableSource);
   const spatial = renderScreen(ROUTES.find(route => route.path === '/spatial'), availableSource);
   assert.match(overview, /No authorized scene geometry/);
   assert.match(spatial, /id=\"spatial-explorer\"/);
   assert.doesNotMatch(spatial, /data-observation-region=\"spatial-renderer\"/);
-  assert.match(spatial, /Current Observation contract has no spatial geometry families/);
+  assert.match(spatial, /Only uniquely identified, validated Environment and Embodiment geometry descriptors are rendered/);
+  assert.match(spatial, /No validated spatial descriptor is present in the retained Observation subset/);
   assert.match(spatial, /embodiment\.body_pose/);
   assert.doesNotMatch(spatial, /environment\.finite_scalar_field/);
   assert.doesNotMatch(spatial, /coordinate-marker-panel|<canvas|<mesh|animated body/i);
@@ -71,6 +90,33 @@ test('Spatial Explorer keeps stale and empty status explicit without presenting 
   const empty = renderScreen(ROUTES.find(route => route.path === '/spatial'), {...initialSource, status: 'empty'});
   assert.match(empty, /No approved claims retained/);
   assert.doesNotMatch(empty, /coordinate-marker-panel|<canvas/);
+});
+
+test('all authorized spatial claim families render their owned fields without assuming scalar-field shape', () => {
+  const claims = [
+    spatialClaim('environment.render_scene', {environment_id: 'arena-1', environment_revision: 'env-r3', render_geometry_sha256: 'd'.repeat(64), length_unit: 'm', frame: {frame_id: 'arena'}, items: []}),
+    spatialClaim('embodiment.render_morphology', {body_id: 'body-7', embodiment_episode_id: 'episode-3', morphology_revision: 'morph-r2', geometry_revision: 'geom-r4', render_geometry_sha256: 'e'.repeat(64), coordinate_system: 'right_handed_z_up', segments: [{segment_id: 'root'}], joints: []}),
+    spatialClaim('embodiment.render_link_pose', {candidate: {body_id: 'body-7', embodiment_episode_id: 'episode-3', morphology_revision: 'morph-r2', geometry_revision: 'geom-r4', source_causal_tick: 17, target_causal_tick: 18, physical_step_id: 'step-18', coordinate_system: 'right_handed_z_up', length_unit: 'm', poses: [{segment_id: 'root'}]}, world_association: {committed_cut: {world_id: 'world-1', causal_tick: 18, commit_id: 'commit-18'}}}),
+  ];
+  const html = renderScreen(ROUTES.find(route => route.path === '/claims'), {...availableSource, claims});
+  for (const expected of ['arena-1', 'env-r3', 'Authored geometry items', 'episode-3', 'Authored segments', 'Pose candidate source tick', '17', 'commit-18', 'Authored link poses']) {
+    assert.ok(html.includes(expected), `expected spatial field in rendered claim: ${expected}`);
+  }
+});
+
+test('claim presentation does not crash on an absent declared range', () => {
+  const claim = {...scalarField, value: {...scalarField.value, valid_range: undefined}};
+  const html = renderScreen(ROUTES.find(route => route.path === '/claims'), {...availableSource, claims: [claim]});
+  assert.match(html, /Declared range/);
+  assert.match(html, /<strong>Not available<\/strong>/);
+});
+
+test('World Overview does not claim geometry is absent when owner geometry projections are present', () => {
+  const claims = [spatialClaim('environment.render_scene', {environment_id: 'arena-1', environment_revision: 'env-r3', render_geometry_sha256: 'd'.repeat(64), length_unit: 'm', frame: {frame_id: 'arena'}, items: []})];
+  const html = renderScreen(ROUTES.find(route => route.path === '/overview'), {...availableSource, claims});
+  assert.match(html, /Owner geometry projections available/);
+  assert.match(html, /no shared physical scene or causal snapshot is implied/);
+  assert.doesNotMatch(html, /No authorized scene geometry/);
 });
 
 test('claim display preserves identity, authority, frame, source time, lineage and local delivery sequence', () => {

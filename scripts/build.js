@@ -13,6 +13,7 @@ await copyFile('src/spatial-renderer.js',join(out,'assets/spatial-renderer.js'))
 await copyFile('src/observation-client.js',join(out,'assets/observation-client.js'));
 await copyFile('src/snapshot-refresh.js',join(out,'assets/snapshot-refresh.js'));
 await copyFile('src/observation-store.js',join(out,'assets/observation-store.js'));
+await copyFile('src/spatial-render-controller.js',join(out,'assets/spatial-render-controller.js'));
 await copyFile('src/presentation-scheduler.js',join(out,'assets/presentation-scheduler.js'));
 await copyFile('src/style.css',join(out,'assets/style.css'));
 console.log('Built static read-only shell to dist/');

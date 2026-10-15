@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {validateEnvironmentDescriptor,validateEmbodimentDescriptor} from '../src/spatial-renderer.js';
+import {validateEnvironmentDescriptor,validateEmbodimentDescriptor,validateBoundPose} from '../src/spatial-renderer.js';
 import * as spatialRenderer from '../src/spatial-renderer.js';
 
 const frame={frame_id:'env.frame',parent_frame_id:'world',origin_m:[0,0,0],x_axis_in_parent:[1,0,0],y_axis_in_parent:[0,1,0],z_axis_in_parent:[0,0,1],handedness:'RIGHT_HANDED',up_axis:'Z'};
@@ -29,6 +29,13 @@ test('validates bounded Embodiment static descriptor and closed keys',async()=>{
   assert.equal((await validateEmbodimentDescriptor(embodiment)).ok,true);
   assert.equal((await validateEmbodimentDescriptor({...embodiment,private_solver_value:2})).ok,false);
   assert.equal((await validateEmbodimentDescriptor({...embodiment,segments:[{...embodiment.segments[0],dimensions_m:[0,1,1]}]})).ok,false);
+});
+test('binds physical poses only to the exact authored morphology and committed World cut',()=>{
+ const pose={candidate:{body_id:embodiment.body_id,embodiment_episode_id:embodiment.embodiment_episode_id,morphology_revision:embodiment.morphology_revision,geometry_revision:embodiment.geometry_revision,render_geometry_sha256:embodiment.render_geometry_sha256,source_world_id:'world.real',target_causal_tick:17,poses:[{segment_id:'body.root',translation_m:[1,2,3],orientation_xyzw:[0,0,0,1]}]},world_association:{association_kind:'transient_current_committed_cut',committed_cut:{world_id:'world.real',causal_tick:17,commit_id:'world.real:commit:17'}}};
+ assert.equal(validateBoundPose(embodiment,pose).ok,true);
+ assert.equal(validateBoundPose(embodiment,{...pose,candidate:{...pose.candidate,render_geometry_sha256:'0'.repeat(64)}}).ok,false);
+ assert.equal(validateBoundPose(embodiment,{...pose,world_association:{...pose.world_association,committed_cut:{...pose.world_association.committed_cut,causal_tick:18}}}).ok,false);
+ assert.equal(validateBoundPose(embodiment,{...pose,candidate:{...pose.candidate,poses:[]}}).ok,false);
 });
 test('accepts topology-only carrier links without fabricating renderable segments',async()=>{
  const candidate={...embodiment,joints:[{joint_id:'joint.root-carrier',parent_link_id:'body.root',child_link_id:'body.carrier',joint_type:'revolute',joint_origin_in_parent_m:[0,0,0],axis_in_joint_frame:[0,0,1]}]};
