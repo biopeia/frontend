@@ -56,6 +56,24 @@ test('claim display preserves identity, authority, frame, source time, lineage a
   assert.match(html, /not joined into a shared snapshot/);
 });
 
+test('claim DOM identity includes the identity issuer', () => {
+  const first = {...bodyPose, identities: [bodyPose.identities[0]]};
+  const second = {...bodyPose, identities: [{...bodyPose.identities[0], issuer: {kind: 'other_owner', identifier: 'other'}}]};
+  const html = renderScreen(ROUTES.find(route => route.path === '/claims'), {...availableSource, claims: [first, second]});
+  const keys = [...html.matchAll(/data-key="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(keys.length, 2);
+  assert.notEqual(keys[0], keys[1]);
+});
+
+test('claim DOM identity safely encodes delimiter characters in opaque identity fields', () => {
+  const first = {...bodyPose, identities: [{...bodyPose.identities[0], issuer: {kind: 'a:b', identifier: 'c'}}]};
+  const second = {...bodyPose, identities: [{...bodyPose.identities[0], issuer: {kind: 'a', identifier: 'b:c'}}]};
+  const html = renderScreen(ROUTES.find(route => route.path === '/claims'), {...availableSource, claims: [first, second]});
+  const keys = [...html.matchAll(/data-key="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(keys.length, 2);
+  assert.notEqual(keys[0], keys[1]);
+});
+
 test('HTML from source claims is escaped before display', () => {
   const hostile = {...bodyPose, identities: [{...bodyPose.identities[0], value: '<script>alert(1)</script>'}]};
   const html = renderScreen(ROUTES.find(route => route.path === '/claims'), {...availableSource, claims: [hostile]});
@@ -66,6 +84,13 @@ test('HTML from source claims is escaped before display', () => {
 test('empty current subset is not shown as source absence', () => {
   const html = renderScreen(ROUTES.find(route => route.path === '/overview'), {...initialSource, status: 'empty', claims: [], scope: 'bounded_in_memory_current_subset'});
   assert.match(html, /not evidence that source state is absent/);
+});
+
+test('last-known claims are explicitly stale after availability failure', () => {
+  const html = renderScreen(ROUTES.find(route => route.path === '/claims'), {...availableSource, status:'stale', stale:true, unavailableStatus:'disconnected'});
+  assert.match(html,/LAST KNOWN · STALE/);
+  assert.match(html,/not a current Observation view/);
+  assert.match(html,/STALE · LAST KNOWN/);
 });
 
 test('history, world catalog and sensorimotor relations remain explicitly unsupported', () => {

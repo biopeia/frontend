@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSnapshotRefresh, SNAPSHOT_REFRESH_INTERVAL_MS} from '../src/snapshot-refresh.js';
+import {createSnapshotRefresh as createRefreshController, SNAPSHOT_REFRESH_INTERVAL_MS} from '../src/snapshot-refresh.js';
+import {createObservationStore} from '../src/observation-store.js';
+
+function createSnapshotRefresh(options) {
+  const store = createObservationStore();
+  if (options.onState) store.subscribe(state => state, options.onState);
+  return createRefreshController({...options, store});
+}
 
 function fakeScheduler() {
   let nextId = 0;
@@ -111,7 +118,7 @@ test('pauses automatic reads while hidden and immediately reads a new snapshot w
   refresh.stop();
 });
 
-test('coalesces manual requests with the in-flight read and clears claims on unavailable response', async () => {
+test('coalesces manual requests with the in-flight read and retains prior claims as stale on unavailable response', async () => {
   const scheduler = fakeScheduler();
   let resolveRead;
   let reads = 0;
@@ -136,11 +143,12 @@ test('coalesces manual requests with the in-flight read and clears claims on una
 
   refresh.stop();
   const failingScheduler = fakeScheduler();
-  let shouldFail = true;
+  let shouldFail = false;
+  let nextSequence = 2;
   const recovering = createSnapshotRefresh({
     readSnapshot: async () => {
       if (shouldFail) throw Object.assign(new Error('bridge unavailable'), {status: 'disconnected'});
-      return snapshot(2);
+      return snapshot(nextSequence++);
     },
     onState: () => {},
     documentRef: fakeDocument(),
@@ -150,13 +158,18 @@ test('coalesces manual requests with the in-flight read and clears claims on una
   recovering.start();
   await Promise.resolve();
   await Promise.resolve();
-  assert.equal(recovering.getState().status, 'disconnected');
-  assert.deepEqual(recovering.getState().claims, []);
+  assert.equal(recovering.getState().status, 'available');
+  assert.deepEqual(recovering.getState().claims, [{deliverySequence: 2}]);
+  shouldFail = true;
+  await failingScheduler.advance(SNAPSHOT_REFRESH_INTERVAL_MS);
+  assert.equal(recovering.getState().status, 'stale');
+  assert.equal(recovering.getState().stale, true);
+  assert.deepEqual(recovering.getState().claims, [{deliverySequence: 2}]);
   assert.equal(recovering.getState().lastCheckedAt, '2026-10-14T12:00:02.000Z');
   shouldFail = false;
   await failingScheduler.advance(SNAPSHOT_REFRESH_INTERVAL_MS);
   assert.equal(recovering.getState().status, 'available');
-  assert.deepEqual(recovering.getState().claims, [{deliverySequence: 2}]);
+  assert.deepEqual(recovering.getState().claims, [{deliverySequence: 3}]);
   recovering.stop();
 });
 
@@ -171,4 +184,27 @@ test('does not schedule another read after stop and rejects a faster-than-approv
   refresh.stop();
   await scheduler.advance(5000);
   assert.equal(reads, 1);
+});
+
+test('stop aborts and invalidates an in-flight read without publishing its late result', async () => {
+  let resolveRead;
+  let receivedSignal;
+  const scheduler = fakeScheduler();
+  const refresh = createSnapshotRefresh({
+    readSnapshot: ({signal}) => {
+      receivedSignal = signal;
+      return new Promise(resolve => { resolveRead = resolve; });
+    },
+    onState: () => {}, scheduler, documentRef: fakeDocument(),
+  });
+  refresh.start();
+  assert.equal(refresh.getState().isRefreshing, true);
+  refresh.stop();
+  assert.equal(receivedSignal.aborted, true);
+  resolveRead(snapshot(7));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(refresh.getState().isRefreshing, false);
+  assert.equal(refresh.getState().status, 'not-configured');
+  assert.deepEqual(refresh.getState().claims, []);
 });
