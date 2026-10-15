@@ -45,5 +45,5 @@ console.log(JSON.stringify({event: 'acceptance-inputs', frontend_sha: frontendSh
 run('node', ['scripts/build.js'], {cwd: root});
 run(process.env.WORLD_PYTHON || 'python3', ['scripts/m1-live-session-acceptance.py'], {
   cwd: root,
-  env: {...process.env, FRONTEND_ROOT: root, FRONTEND_SHA: frontendSha, MIN_BROWSER_COMMITS: '2'},
+  env: {...process.env, FRONTEND_ROOT: root, FRONTEND_SHA: frontendSha},
 });

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import ExitStack
 import http.server
 import json
 import os
@@ -81,6 +82,28 @@ profile_sha = hashlib.sha256(profile_path.read_bytes()).hexdigest()
 relay_observations: list[dict[str, object]] = []
 relay_checks: dict[str, bool] = {}
 
+def stop_process(process: subprocess.Popen[str], *, process_group: bool = False) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        if process_group:
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        try:
+            if process_group:
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=10)
+
 class RelayHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     upstream: str | None = None
@@ -149,7 +172,7 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_: object) -> None:
         pass
 
-with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
+with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary, ExitStack() as cleanup:
     state_parent = Path(temporary)
     state_root = state_parent / "world-state"
     chrome_profile = state_parent / "chrome-profile"
@@ -160,6 +183,7 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
          "--remote-allow-origins=*", f"--user-data-dir={chrome_profile}", "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
+    cleanup.callback(stop_process, chrome_process, process_group=True)
     active_port_path = chrome_profile / "DevToolsActivePort"
     chrome_port = None
     for _ in range(100):
@@ -173,6 +197,8 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
     if not chrome_port:
         raise RuntimeError("Prestarted Chrome did not publish its DevTools endpoint")
     relay = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RelayHandler)
+    cleanup.callback(relay.server_close)
+    cleanup.callback(relay.shutdown)
     relay_thread = threading.Thread(target=relay.serve_forever, daemon=True)
     relay_thread.start()
     relay_url = f"http://127.0.0.1:{relay.server_port}/v1/current"
@@ -237,6 +263,7 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
         ["node", str(frontend / "scripts/acceptance-live-browser.mjs")],
         cwd=frontend, env=browser_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
+    cleanup.callback(stop_process, browser_process)
     page_deadline = time.monotonic() + 15
     while time.monotonic() < page_deadline and not browser_ready_path.is_file():
         if browser_process.poll() is not None:
@@ -251,6 +278,7 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
     browser_attached_at = browser_ready["browser_page_attached_at_utc"]
     command = [str(bridge_bin), "--profile", str(profile_path), "--state-root", str(state_root), "--cycles", "20"]
     world_process = subprocess.Popen(command, cwd=world, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    cleanup.callback(stop_process, world_process)
     world_events: list[dict[str, object]] = []
     event_times: dict[int, str] = {}
     browser_stdout: str | None = None
