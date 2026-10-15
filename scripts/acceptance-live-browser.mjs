@@ -107,6 +107,27 @@ try {
   const snapshots = [];
   const polls = [];
   let lastView;
+  // Keep the automatically completed first read; the World session may be short-lived.
+  lastView = await evaluate(`(() => {
+    const cards = [...document.querySelectorAll('.claim-card')];
+    return {status: document.querySelector('.connection-indicator')?.innerText || '',
+      families: cards.map(card => card.querySelector('h2')?.innerText || ''),
+      cards: cards.map(card => card.innerText), bodyText: document.body.innerText};
+  })()`);
+  if (lastView.status.includes('Current view available') && lastView.families.length === 2) {
+    const bodyCard = lastView.cards[0];
+    const bodyTick = Number(bodyCard.match(/world\.world_causal_tick = (\d+)/)?.[1]);
+    const bodyLineage = bodyCard.match(/embodiment_state_sha256: ([a-f0-9]{64})/)?.[1] || null;
+    const environmentLineage = lastView.cards[1].match(/owner_checkpoint_sha256: ([a-f0-9]{64})/)?.[1] || null;
+    if (Number.isSafeInteger(bodyTick)) {
+      const observedAt = new Date().toISOString();
+      snapshots.push({key: `${bodyTick}:${bodyLineage || ''}:${environmentLineage || ''}`, tick: bodyTick,
+        observed_at_utc: observedAt, families: lastView.families, body_state_sha256: bodyLineage,
+        environment_checkpoint_sha256: environmentLineage});
+      polls.push({tick: bodyTick, observed_at_utc: observedAt, body_state_sha256: bodyLineage,
+        environment_checkpoint_sha256: environmentLineage});
+    }
+  }
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const beforeReads = requests.filter(request => request.url === origin + '/api/observation/current').length;
