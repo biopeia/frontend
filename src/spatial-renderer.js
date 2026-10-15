@@ -63,8 +63,13 @@ export async function validateEmbodimentDescriptor(value) {
   if (!Array.isArray(value.segments)||!Array.isArray(value.joints)||value.segments.length>128||value.joints.length>127) return fail('Embodiment topology exceeds the approved bounds.');
   const ids=new Set();
   for (const s of value.segments) { if (!keys(s,['segment_id','shape','dimensions_m','visual_origin_in_link_m']) || !str(s.segment_id)||ids.has(s.segment_id)||s.shape!=='box'||!representableVec(s.dimensions_m)||s.dimensions_m.some(n=>n<=0||Math.fround(n)===0)||!representableVec(s.visual_origin_in_link_m)) return fail('Embodiment segment is invalid or unrenderable.'); ids.add(s.segment_id); }
+  // A morphology can contain links that carry topology but have no authored
+  // visual shape. Joint endpoints declare those link IDs; they need not be
+  // renderable segment IDs and must never cause synthesized geometry.
+  const links=new Set(ids);
   const jointIds=new Set();
-  for (const j of value.joints) { if (!keys(j,['joint_id','parent_link_id','child_link_id','joint_type','joint_origin_in_parent_m','axis_in_joint_frame']) || !str(j.joint_id)||jointIds.has(j.joint_id)||!ids.has(j.parent_link_id)||!ids.has(j.child_link_id)||j.parent_link_id===j.child_link_id||j.joint_type!=='revolute'||!vec3(j.joint_origin_in_parent_m)||!vec3(j.axis_in_joint_frame)||Math.hypot(...j.axis_in_joint_frame)<1e-12||Math.abs(Math.hypot(...j.axis_in_joint_frame)-1)>1e-9) return fail('Embodiment joint topology is invalid.'); jointIds.add(j.joint_id); }
+  for (const j of value.joints) { if (!keys(j,['joint_id','parent_link_id','child_link_id','joint_type','joint_origin_in_parent_m','axis_in_joint_frame']) || !str(j.joint_id)||jointIds.has(j.joint_id)||!str(j.parent_link_id)||!str(j.child_link_id)||j.parent_link_id===j.child_link_id||j.joint_type!=='revolute'||!vec3(j.joint_origin_in_parent_m)||!vec3(j.axis_in_joint_frame)||Math.hypot(...j.axis_in_joint_frame)<1e-12||Math.abs(Math.hypot(...j.axis_in_joint_frame)-1)>1e-9) return fail('Embodiment joint topology is invalid.'); jointIds.add(j.joint_id); links.add(j.parent_link_id); links.add(j.child_link_id); }
+  if (links.size > 128) return fail('Embodiment topology exceeds the approved link bound.');
   const preimage={contract_revision:value.contract_revision,schema_version:value.schema_version,coordinate_system:value.coordinate_system,length_unit:value.length_unit,segments:[...value.segments].sort((a,b)=>a.segment_id<b.segment_id?-1:a.segment_id>b.segment_id?1:0),joints:[...value.joints].sort((a,b)=>a.joint_id<b.joint_id?-1:a.joint_id>b.joint_id?1:0)};
   if(await sha256(`biopeia:embodiment.render_morphology/v1\n${jcs(preimage)}`)!==value.render_geometry_sha256) return fail('Embodiment render geometry digest does not match its descriptor.');
   return {ok:true,value};
@@ -73,12 +78,17 @@ export async function validateEmbodimentDescriptor(value) {
 /** Dynamic values are never accepted for composition absent the caller's World-owned proof verifier. */
 export async function validateEmbodimentPoses(descriptor, poseSet, verifyWorldCut) {
   const valid=await validateEmbodimentDescriptor(descriptor); if(!valid.ok) return valid;
-  if (typeof verifyWorldCut!=='function' || verifyWorldCut(poseSet)!==true) return fail('Dynamic poses are not rendered: a World-owned verifier has not established their exact committed cut.');
   const binding=['body_id','embodiment_episode_id','morphology_revision','geometry_revision','render_geometry_sha256'];
-  if (!poseSet || !keys(poseSet,['body_id','embodiment_episode_id','morphology_revision','geometry_revision','render_geometry_sha256','source_world_id','confirmed_cut_reference','physical_step_id','reference_frame','length_unit','poses','completeness']) || binding.some(k=>poseSet[k]!==descriptor[k]) || poseSet.reference_frame!=='physics3d.world' || poseSet.length_unit!=='m' || poseSet.completeness!=='complete' || !Array.isArray(poseSet.poses) || poseSet.poses.length!==descriptor.segments.length) return fail('Dynamic poses do not exactly bind to the static descriptor.');
+  if (!poseSet || !keys(poseSet,['body_id','embodiment_episode_id','morphology_revision','geometry_revision','render_geometry_sha256','source_world_id','confirmed_cut_reference','physical_step_id','reference_frame','length_unit','poses','completeness']) || binding.some(k=>poseSet[k]!==descriptor[k]) || !['source_world_id','confirmed_cut_reference','physical_step_id'].every(k=>str(poseSet[k])) || poseSet.reference_frame!=='physics3d.world' || poseSet.length_unit!=='m' || poseSet.completeness!=='complete' || !Array.isArray(poseSet.poses) || poseSet.poses.length!==descriptor.segments.length) return fail('Dynamic poses do not exactly bind to the static descriptor.');
   const expected=new Set(descriptor.segments.map(s=>s.segment_id));
   for(const p of poseSet.poses) { if(!keys(p,['segment_id','translation_m','orientation_xyzw'])||!expected.delete(p.segment_id)||!representableVec(p.translation_m)||!Array.isArray(p.orientation_xyzw)||p.orientation_xyzw.length!==4||!p.orientation_xyzw.every(v=>finite(v)&&f32(v))||Math.abs(Math.hypot(...p.orientation_xyzw)-1)>1e-6) return fail('Dynamic link transform set is partial or invalid.'); }
-  return expected.size ? fail('Dynamic transform set is incomplete.') : {ok:true,value:poseSet};
+  if(expected.size) return fail('Dynamic transform set is incomplete.');
+  // Invoke the World-owned proof verifier only after the candidate is a bounded,
+  // structurally valid, exactly bound pose set. It must be synchronous: an
+  // asynchronous verdict cannot authorize rendering in this call path.
+  let cutVerified=false;
+  try { cutVerified=typeof verifyWorldCut==='function' && verifyWorldCut(poseSet)===true; } catch { cutVerified=false; }
+  return cutVerified ? {ok:true,value:poseSet} : fail('Dynamic poses are not rendered: a World-owned verifier has not established their exact committed cut.');
 }
 
 // The current observation contract carries no spatial descriptor families. This

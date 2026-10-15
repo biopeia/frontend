@@ -56,6 +56,7 @@ test('Spatial Explorer exposes a separate renderer slot but current claims canno
   const spatial = renderScreen(ROUTES.find(route => route.path === '/spatial'), availableSource);
   assert.match(overview, /No authorized scene geometry/);
   assert.match(spatial, /id=\"spatial-explorer\"/);
+  assert.doesNotMatch(spatial, /data-observation-region=\"spatial-renderer\"/);
   assert.match(spatial, /Current Observation contract has no spatial geometry families/);
   assert.match(spatial, /embodiment\.body_pose/);
   assert.doesNotMatch(spatial, /environment\.finite_scalar_field/);
