@@ -62,8 +62,10 @@ try {
   const consoleErrors = [];
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
-    if (message.method === 'Network.requestWillBeSent') requests.push({url: message.params.request.url, method: message.params.request.method});
-    if (message.method === 'Network.responseReceived') responses.push({url: message.params.response.url, status: message.params.response.status});
+    if (message.method === 'Network.requestWillBeSent') requests.push({requestId: message.params.requestId, url: message.params.request.url, method: message.params.request.method});
+    if (message.method === 'Network.responseReceived') responses.push({requestId: message.params.requestId, url: message.params.response.url, status: message.params.response.status, mimeType: message.params.response.mimeType});
+    if (message.method === 'Network.loadingFinished') responses.push({requestId: message.params.requestId, finished: true});
+    if (message.method === 'Network.loadingFailed') responses.push({requestId: message.params.requestId, failed: message.params.errorText});
     if (message.method === 'Runtime.exceptionThrown') consoleErrors.push(message.params.exceptionDetails?.text || 'uncaught browser exception');
     if (message.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(message.params.type)) consoleErrors.push(message.params.args.map(arg => arg.value || arg.description || '').join(' '));
     if (!message.id) return;
@@ -109,10 +111,23 @@ try {
   while (Date.now() < deadline) {
     const beforeReads = requests.filter(request => request.url === origin + '/api/observation/current').length;
     await evaluate("document.querySelector('#refresh')?.click()");
-    for (let wait = 0; wait < 40; wait += 1) {
-      const reads = requests.filter(request => request.url === origin + '/api/observation/current').length;
-      if (reads > beforeReads) break;
+    let readRequest;
+    for (let wait = 0; wait < 80; wait += 1) {
+      readRequest = requests.filter(request => request.url === origin + '/api/observation/current')[beforeReads];
+      if (readRequest) break;
       await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    if (readRequest) {
+      for (let wait = 0; wait < 120; wait += 1) {
+        const response = responses.find(item => item.requestId === readRequest.requestId && (item.finished || item.failed));
+        if (response) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      for (let wait = 0; wait < 40; wait += 1) {
+        const status = await evaluate("document.querySelector('.connection-indicator')?.innerText || ''");
+        if (!status.includes('Reading Observation')) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
     }
     const view = await evaluate(`(() => {
       const cards = [...document.querySelectorAll('.claim-card')];

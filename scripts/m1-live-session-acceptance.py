@@ -120,7 +120,13 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
-        received.update({"status": status, "bytes": len(payload)})
+        try:
+            body = json.loads(payload)
+            received.update({"status": status, "bytes": len(payload), "body_keys": list(body) if isinstance(body, dict) else None,
+                             "body_tick": body.get("tick") if isinstance(body, dict) else None,
+                             "body_error": body.get("error") if isinstance(body, dict) else None})
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            received.update({"status": status, "bytes": len(payload), "body_prefix": payload[:100].decode("utf-8", "replace")})
 
     def do_POST(self) -> None:
         relay_observations.append({"method": "POST", "path": self.path, "status": 405, "at_utc": utc_now()})
