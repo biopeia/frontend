@@ -97,6 +97,7 @@ try {
   if (!connectedAt) throw new Error(`Browser did not connect to the live current-view bridge; last UI status=${JSON.stringify(lastStatus)}`);
   const snapshots = [];
   const polls = [];
+  let lastView;
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const beforeReads = requests.filter(request => request.url === origin + '/api/observation/current').length;
@@ -112,6 +113,7 @@ try {
         families: cards.map(card => card.querySelector('h2')?.innerText || ''),
         cards: cards.map(card => card.innerText), bodyText: document.body.innerText};
     })()`);
+    lastView = view;
     if (view.status.includes('Current view available') && view.families.length === 2) {
       const allowed = ['embodiment.body_pose', 'environment.finite_scalar_field'];
       if (JSON.stringify(view.families) !== JSON.stringify(allowed)) throw new Error(`Unexpected claim families: ${JSON.stringify(view.families)}`);
@@ -137,7 +139,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   const ticks = [...new Set(snapshots.map(snapshot => snapshot.tick))];
-  if (ticks.length < 2) throw new Error(`Browser did not render two distinct committed World ticks: ${JSON.stringify(snapshots)}`);
+  if (ticks.length < 2) throw new Error(`Browser did not render two distinct committed World ticks: ${JSON.stringify({snapshots, lastView, apiRequests: requests.filter(request => request.url.includes('/api/observation/current'))})}`);
   if (snapshots.some(snapshot => !snapshot.body_state_sha256 || !snapshot.environment_checkpoint_sha256)) throw new Error('Rendered claim lineage digests were missing');
   const apiReads = requests.filter(request => request.url === origin + '/api/observation/current');
   const foreign = requests.filter(request => new URL(request.url).origin !== origin);
