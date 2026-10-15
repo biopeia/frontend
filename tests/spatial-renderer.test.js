@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import {validateEnvironmentDescriptor,validateEmbodimentDescriptor,validateBoundPose,jointMarkerStates} from '../src/spatial-renderer.js';
 import * as spatialRenderer from '../src/spatial-renderer.js';
 
@@ -78,4 +80,22 @@ test('rejects duplicate IDs and oversized topology-only link sets',async()=>{
 test('does not expose dynamic pose acceptance before a World proof boundary is integrated',()=>{
  assert.equal('validateEmbodimentPoses' in spatialRenderer,false);
  assert.equal(spatialRenderer.mountSpatialExplorer.length,1);
+});
+
+test('keeps markerMode uniform precision identical across body shader stages',()=>{
+ const source=readFileSync(fileURLToPath(new URL('../src/spatial-renderer.js',import.meta.url)),'utf8');
+ const start=source.indexOf('function drawBodyCanvas(');
+ const end=source.indexOf('function drawCanvas(',start);
+ assert.ok(start>=0&&end>start,'body renderer shader source is present');
+ const bodySource=source.slice(start,end);
+ const [,vertexShader]=bodySource.match(/const vs=`([^`]+)`;/)??[];
+ const [,fragmentShader]=bodySource.match(/const fs=`([^`]+)`;/)??[];
+ assert.ok(vertexShader&&fragmentShader,'both body shader stages are present');
+ const effectiveUniformPrecision=shader=>{
+  const explicit=shader.match(/uniform\s+(lowp|mediump|highp)\s+float\s+markerMode\s*;/)?.[1];
+  if(explicit)return explicit;
+  return shader.match(/precision\s+(lowp|mediump|highp)\s+float\s*;/)?.[1]??null;
+ };
+ assert.equal(effectiveUniformPrecision(vertexShader),'mediump');
+ assert.equal(effectiveUniformPrecision(fragmentShader),'mediump');
 });
