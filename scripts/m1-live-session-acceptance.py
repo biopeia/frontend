@@ -57,11 +57,13 @@ with (world / "pyproject.toml").open("rb") as handle:
     project = tomllib.load(handle)["project"]
 runtime_requirements = project["optional-dependencies"]["runtime"]
 pins: dict[str, str] = {}
+source_checkout_heads: dict[str, str] = {}
 for requirement in runtime_requirements:
     name, uri = requirement.split(" @ ", 1)
     pins[name] = uri.rsplit("@", 1)[1]
     repo_key = {"organism": "ORGANISM_REPO", "embodiment": "EMBODIMENT_REPO", "environment": "ENVIRONMENT_REPO", "modality": "MODALITY_REPO", "observation": "OBSERVATION_REPO"}[name]
     repo_path = Path(required(repo_key)).resolve()
+    source_checkout_heads[name] = git(repo_path, "rev-parse", "HEAD")
     try:
         git(repo_path, "cat-file", "-e", f"{pins[name]}^{{commit}}")
     except subprocess.CalledProcessError as error:
@@ -77,6 +79,7 @@ except (OSError, subprocess.CalledProcessError) as error:
 
 profile_sha = hashlib.sha256(profile_path.read_bytes()).hexdigest()
 relay_observations: list[dict[str, object]] = []
+relay_checks: dict[str, bool] = {}
 
 class RelayHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -85,11 +88,13 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         received = {"path": self.path, "host": self.headers.get("Host"), "origin": self.headers.get("Origin"), "at_utc": utc_now()}
         relay_observations.append(received)
-        if (self.path != "/v1/current" or
-                self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}" or
-                self.headers.get("Origin") != frontend_origin):
-            self.send_error(404)
+        if self.path != "/v1/current" or self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
+            self._json_error(404, "not_found")
             received["status"] = 404
+            return
+        if self.headers.get("Origin") != frontend_origin:
+            self._json_error(403, "origin_denied")
+            received["status"] = 403
             return
         target = RelayHandler.upstream
         if target is None:
@@ -130,7 +135,16 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         relay_observations.append({"method": "POST", "path": self.path, "status": 405, "at_utc": utc_now()})
-        self.send_error(405)
+        self._json_error(405, "method_not_allowed")
+
+    def _json_error(self, status: int, code: str) -> None:
+        payload = json.dumps({"error": code}).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def log_message(self, *_: object) -> None:
         pass
@@ -162,6 +176,53 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary:
     relay_thread = threading.Thread(target=relay.serve_forever, daemon=True)
     relay_thread.start()
     relay_url = f"http://127.0.0.1:{relay.server_port}/v1/current"
+
+    def relay_request(url: str, *, method: str = "GET", origin: str = frontend_origin) -> tuple[int, dict[str, str], bytes]:
+        request = urllib.request.Request(url, method=method, headers={"Origin": origin, "Accept": "application/json"})
+        try:
+            response = urllib.request.urlopen(request, timeout=3)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            return response.status, dict(response.headers.items()), response.read(1_000_002)
+
+    status, headers, payload = relay_request(relay_url)
+    relay_checks["pre_ready_503_no_store"] = status == 503 and headers.get("Cache-Control") == "no-store" and b"unavailable" in payload
+    if not relay_checks["pre_ready_503_no_store"]:
+        raise RuntimeError(f"Relay did not return bounded uncached 503 before World ready: {status}, {headers}")
+    status, headers, _ = relay_request(relay_url.replace("/v1/current", "/v1/current?unexpected=1"))
+    relay_checks["route_query_rejected"] = status == 404 and headers.get("Cache-Control") == "no-store"
+    status, headers, _ = relay_request(relay_url, origin="http://attacker.invalid")
+    relay_checks["foreign_origin_rejected"] = status == 403 and headers.get("Cache-Control") == "no-store"
+    status, headers, _ = relay_request(relay_url, method="POST")
+    relay_checks["post_rejected"] = status == 405 and headers.get("Cache-Control") == "no-store"
+    if not all(relay_checks.values()):
+        raise RuntimeError(f"Relay method/path/origin boundary check failed: {relay_checks}")
+
+    class OversizedUpstream(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            body = b"x" * 1_000_001
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *_: object) -> None:
+            pass
+
+    oversized_server = http.server.HTTPServer(("127.0.0.1", 0), OversizedUpstream)
+    oversized_thread = threading.Thread(target=oversized_server.serve_forever, daemon=True)
+    oversized_thread.start()
+    RelayHandler.upstream = f"http://127.0.0.1:{oversized_server.server_port}/v1/current"
+    try:
+        status, headers, _ = relay_request(relay_url)
+        relay_checks["oversized_response_rejected"] = status == 413 and headers.get("Cache-Control") == "no-store"
+    finally:
+        RelayHandler.upstream = None
+        oversized_server.shutdown()
+        oversized_server.server_close()
+    if not relay_checks["oversized_response_rejected"]:
+        raise RuntimeError(f"Relay oversized payload boundary check failed: {relay_checks}")
     browser_ready_path = state_parent / "browser-ready.json"
     browser_env = {
         **os.environ,
@@ -313,6 +374,8 @@ report = {
     "frontend_sha": frontend_sha,
     "world_sha": source_revisions["world"],
     "source_revisions": {name: source_revisions[name] for name in ["organism", "embodiment", "environment", "modality", "observation"]},
+    "source_checkout_heads": source_checkout_heads,
+    "source_pin_available_in_checkout": {name: True for name in pins},
     "profile_id": next((event.get("profile_id") for event in world_events if event.get("event") == "ready"), None),
     "profile_sha256": profile_sha,
     "process_run_id": terminal.get("run_id"),
@@ -325,6 +388,7 @@ report = {
     "unavailable_browser": unavailable_result,
     "browser_observed_commits_while_attached": live_ticks,
     "terminal": terminal,
+    "relay_checks": relay_checks,
     "checks": {"approved_families_only": True, "source_lineage_visible": True, "repeated_reads_are_get": True,
                "foreign_origin_rejected": True, "no_non_same_origin_browser_requests": True,
                "browser_attached_during_at_least_two_commits": True},
