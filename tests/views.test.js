@@ -92,6 +92,14 @@ test('Spatial Explorer keeps stale and empty status explicit without presenting 
   assert.doesNotMatch(empty, /coordinate-marker-panel|<canvas/);
 });
 
+test('Spatial Explorer keeps detailed claim provenance available but collapsed beneath the primary viewport', () => {
+  const spatial = renderScreen(ROUTES.find(route => route.path === '/spatial'), availableSource);
+  assert.match(spatial, /<details class="spatial-diagnostics"><summary>Inspect separate owner claims and provenance<\/summary>/);
+  assert.match(spatial, /id="spatial-explorer"/);
+  assert.match(spatial, /data-observation-region="claims"/);
+  assert.doesNotMatch(spatial, /<details class="spatial-diagnostics" open/);
+});
+
 test('all authorized spatial claim families render their owned fields without assuming scalar-field shape', () => {
   const claims = [
     spatialClaim('environment.render_scene', {environment_id: 'arena-1', environment_revision: 'env-r3', render_geometry_sha256: 'd'.repeat(64), length_unit: 'm', frame: {frame_id: 'arena'}, items: []}),
