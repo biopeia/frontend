@@ -201,7 +201,10 @@ function updateStatus(source) {
   const nextChecked = lastChecked(source);
   if (checked && nextChecked.includes('id="last-checked"')) checked.outerHTML = nextChecked;
   const refresh = document.querySelector('#refresh');
-  if (refresh) refresh.textContent = source.isRefreshing ? 'Reading…' : 'Refresh read';
+  // Keep the visible label stable: changing it on every current-view request
+  // can wrap the button and shift the top bar while the page is being read.
+  // Expose request activity to assistive technology without changing layout.
+  if (refresh) refresh.setAttribute('aria-busy', String(source.isRefreshing));
   const note = document.querySelector('#observation-notice');
   const nextNotice = notice(source);
   if (note && note.innerHTML !== nextNotice) note.innerHTML = nextNotice;
