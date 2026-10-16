@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
-import {validateEnvironmentDescriptor,validateEmbodimentDescriptor,validateBoundPose,jointMarkerStates} from '../src/spatial-renderer.js';
+import {validateEnvironmentDescriptor,validateEmbodimentDescriptor,validateBoundPose,jointMarkerStates,viewerSegmentColor,flatTriangleNormals} from '../src/spatial-renderer.js';
 import * as spatialRenderer from '../src/spatial-renderer.js';
 
 const frame={frame_id:'env.frame',parent_frame_id:'world',origin_m:[0,0,0],x_axis_in_parent:[1,0,0],y_axis_in_parent:[0,1,0],z_axis_in_parent:[0,0,1],handedness:'RIGHT_HANDED',up_axis:'Z'};
@@ -98,4 +98,21 @@ test('keeps markerMode uniform precision identical across body shader stages',()
  };
  assert.equal(effectiveUniformPrecision(vertexShader),'mediump');
  assert.equal(effectiveUniformPrecision(fragmentShader),'mediump');
+});
+
+test('uses deterministic presentation-only segment colors without encoding source semantics',()=>{
+ const first=viewerSegmentColor('body.root'),second=viewerSegmentColor('body.arm');
+ assert.deepEqual(viewerSegmentColor('body.root'),first);
+ assert.equal(first.length,3);
+ assert.ok(first.every(channel=>channel>=0&&channel<=1));
+ assert.notDeepEqual(first,second);
+});
+
+test('computes flat triangle normals and safely handles degenerate triangles',()=>{
+ const normals=flatTriangleNormals(new Float32Array([0,0,0,1,0,0,0,1,0, 0,0,0,1,0,0,2,0,0]));
+ assert.equal(normals.length,18);
+ assert.deepEqual(Array.from(normals.slice(0,3)),[0,0,1]);
+ assert.deepEqual(Array.from(normals.slice(9,12)),[0,0,1]);
+ assert.ok(Array.from(normals).every(Number.isFinite));
+ assert.equal(flatTriangleNormals(new Float32Array([0,0,0])).length,0);
 });
