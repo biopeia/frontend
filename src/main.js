@@ -119,7 +119,11 @@ async function readArchive(after = 0) {
   target.textContent = 'Reading bounded local archive receipts…';
   try {
     const response = await fetch('/api/observation/archive/receipts?limit=25&after=' + after, {cache:'no-store',credentials:'same-origin'});
-    if (!response.ok) throw new Error('Archive read unavailable (' + response.status + ')');
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({}));
+      const reason = typeof failure.status === 'string' ? failure.status : typeof failure.error === 'string' ? failure.error : 'archive_unavailable';
+      throw new Error('Archive read unavailable (' + response.status + ', ' + reason + ')');
+    }
     const payload = await response.json();
     if (payload.schema !== 'biopeia.observation.archive-http.v1' || !Array.isArray(payload.receipts) ||
         typeof payload.has_more !== 'boolean' || !Number.isSafeInteger(payload.next_after_receipt_sequence)) throw new Error('Unsupported archive response');
