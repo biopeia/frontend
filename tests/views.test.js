@@ -178,3 +178,15 @@ test('history, world catalog and sensorimotor relations remain explicitly unsupp
   assert.match(renderScreen(ROUTES.find(route => route.path === '/worlds'), availableSource), /World discovery, run enumeration/);
   assert.match(renderScreen(ROUTES.find(route => route.path === '/sensorimotor'), availableSource), /No relation contract is available/);
 });
+
+
+test('Claim Inspector filters only source-present families and reports bounded counts', () => {
+  const route = ROUTES.find(route => route.path === '/claims');
+  const source = {...availableSource, claims: [bodyPose, scalarField]};
+  const html = renderScreen(route, source, {claimFamily: 'embodiment.body_pose'});
+  assert.match(html, /Displaying 1 of 2 retained claims/);
+  assert.match(html, /Filter by source claim family/);
+  assert.match(html, /value="embodiment.body_pose" selected/);
+  assert.doesNotMatch(html, /<h2>environment\.finite_scalar_field<\/h2>/);
+  assert.match(html, /<h2>embodiment\.body_pose<\/h2>/);
+});
