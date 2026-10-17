@@ -65,6 +65,8 @@ try {
   const requests = [];
   const responses = [];
   const consoleErrors = [];
+  let archiveReceiptResponseOverride = null;
+  let archiveFailureIntercepted = false;
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
     if (message.method === 'Network.requestWillBeSent') requests.push({requestId: message.params.requestId, url: message.params.request.url, method: message.params.request.method});
@@ -73,6 +75,23 @@ try {
     if (message.method === 'Network.loadingFailed') responses.push({requestId: message.params.requestId, failed: message.params.errorText});
     if (message.method === 'Runtime.exceptionThrown') consoleErrors.push(message.params.exceptionDetails?.text || 'uncaught browser exception');
     if (message.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(message.params.type)) consoleErrors.push(message.params.args.map(arg => arg.value || arg.description || '').join(' '));
+    if (message.method === 'Fetch.requestPaused') {
+      const {requestId, request} = message.params;
+      if (archiveReceiptResponseOverride && request.url.startsWith(origin + '/api/observation/archive/receipts')) {
+        const {responseCode, body: responseBody, failReason} = archiveReceiptResponseOverride;
+        archiveReceiptResponseOverride = null;
+        archiveFailureIntercepted = true;
+        if (failReason) {
+          void send('Fetch.failRequest', {requestId, errorReason: failReason});
+        } else {
+          const body = Buffer.from(responseBody).toString('base64');
+          void send('Fetch.fulfillRequest', {requestId, responseCode,
+            responseHeaders: [{name: 'Content-Type', value: 'application/json'}], body});
+        }
+      } else {
+        void send('Fetch.continueRequest', {requestId});
+      }
+    }
     if (!message.id) return;
     const waiter = pending.get(message.id);
     if (!waiter) return;
@@ -266,6 +285,11 @@ try {
       return {owner,family,revision};
     })()`);
     if (!filterState.owner || !filterState.family || !filterState.revision) throw new Error('Archive receipt card omitted supported filter fields');
+    const submitFilters = () => evaluate(`(() => document.querySelector('#archive-filter-form').requestSubmit())()`);
+    archiveFailureIntercepted = false;
+    archiveReceiptResponseOverride = {responseCode: 200,
+      body: JSON.stringify({schema:'biopeia.observation.archive-http.v1',receipts:[]})};
+    await send('Fetch.enable', {patterns: [{urlPattern: origin + '/api/observation/archive/receipts*', requestStage: 'Request'}]});
     await evaluate(`(() => {
       const form=document.querySelector('#archive-filter-form');
       form.elements.namedItem('owner').value=${JSON.stringify(filterState.owner)};
@@ -273,6 +297,41 @@ try {
       form.elements.namedItem('revision').value=${JSON.stringify(filterState.revision)};
       form.requestSubmit();
     })()`);
+    const partialText = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('Unsupported archive response') ? result : null; })()", 'explicit rejection of a partial archive response');
+    if (!archiveFailureIntercepted || !partialText.includes('current-view data remains independent')) {
+      throw new Error('A partial archive receipt response was not rejected with an explicit independent error');
+    }
+    archiveFailureIntercepted = false;
+    archiveReceiptResponseOverride = {responseCode: 503,
+      body: JSON.stringify({error: 'archive_unavailable'})};
+    await submitFilters();
+    const unavailableText = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('Archive read unavailable (503, archive_unavailable)') ? result : null; })()", 'explicit archive-unavailable state after injected 503');
+    if (!archiveFailureIntercepted || !unavailableText.includes('current-view data remains independent')) {
+      throw new Error('An unavailable archive receipt read was not rendered as an explicit, independent failure');
+    }
+    archiveFailureIntercepted = false;
+    archiveReceiptResponseOverride = {responseCode: 403, body: JSON.stringify({error: 'archive_access_denied'})};
+    await submitFilters();
+    const deniedText = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('Archive read unavailable (403, archive_access_denied)') ? result : null; })()", 'explicit archive access-denied state after injected 403');
+    if (!archiveFailureIntercepted || !deniedText.includes('current-view data remains independent')) {
+      throw new Error('A denied archive receipt read was not rendered as an explicit, independent failure');
+    }
+    archiveFailureIntercepted = false;
+    archiveReceiptResponseOverride = {responseCode: 413, body: JSON.stringify({error: 'archive_response_too_large'})};
+    await submitFilters();
+    const oversizedText = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('Archive read unavailable (413, archive_response_too_large)') ? result : null; })()", 'explicit oversized archive response state after injected 413');
+    if (!archiveFailureIntercepted || !oversizedText.includes('current-view data remains independent')) {
+      throw new Error('An oversized archive receipt response was not rendered as an explicit, independent failure');
+    }
+    archiveFailureIntercepted = false;
+    archiveReceiptResponseOverride = {failReason: 'ConnectionReset'};
+    await submitFilters();
+    const disconnectedText = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('current-view data remains independent') && !result.includes('Reading bounded local archive receipts…') && !result.includes('Archive read unavailable') && !result.includes('Unsupported archive response') ? result : null; })()", 'independent archive error after injected connection reset');
+    if (!archiveFailureIntercepted || !disconnectedText) {
+      throw new Error('A disconnected archive receipt read was not rendered as an independent failure');
+    }
+    await send('Fetch.disable');
+    await submitFilters();
     let filteredReadIssued = false;
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (archiveReads().length > filterBefore) { filteredReadIssued = true; break; }
@@ -312,6 +371,11 @@ try {
       coverage_inspected: true, filtered_results_rendered: true, keyboard_filter_submission: true,
       accessible_filter_names: ['Owner', 'Family', 'Revision', 'Apply filters'], same_origin_gets: capturedArchiveReads,
       bounded_coverage_copy: coverage.includes('not all World history'), receipt_next_page_exercised: receiptNextPageExercised,
+      injected_partial_archive_response_rejected: true,
+      injected_archive_unavailable_rendered: true,
+      injected_archive_denied_rendered: true,
+      injected_oversized_archive_response_rendered: true,
+      injected_archive_disconnect_rendered: true,
       filtered_status: filteredReceipts.match(/[^\n]*/)?.[0]};
   }
   if (consoleErrors.length) throw new Error(`Browser reported errors or warnings: ${JSON.stringify(consoleErrors)}`);
