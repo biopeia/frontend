@@ -47,6 +47,7 @@ expected_observation_sha = required("OBSERVATION_SHA")
 frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://127.0.0.1:4173")
 chrome_bin = os.environ.get("CHROME_BIN", "/usr/bin/google-chrome")
 archive_acceptance = os.environ.get("FRONTEND_ARCHIVE_ACCEPTANCE") == "1"
+archive_adapter_sha = os.environ.get("OBSERVATION_ARCHIVE_ADAPTER_SHA")
 
 if git(frontend, "rev-parse", "HEAD") != frontend_sha or git(frontend, "status", "--porcelain=v1", "--untracked-files=all"):
     raise RuntimeError("Frontend candidate changed or is dirty")
@@ -86,6 +87,13 @@ for requirement in runtime_requirements:
         raise RuntimeError(f"Pinned {name} revision is unavailable in its supplied checkout: {pins[name]}") from error
     if name == "observation" and pins[name] != expected_observation_sha:
         raise RuntimeError(f"Observation pin mismatch: expected {expected_observation_sha}, World declares {pins[name]}")
+if archive_acceptance:
+    if not archive_adapter_sha or len(archive_adapter_sha) != 40 or any(c not in "0123456789abcdef" for c in archive_adapter_sha):
+        raise RuntimeError("Archive acceptance requires the exact Observation archive-adapter source SHA")
+    if git(observation_repo, "rev-parse", "HEAD") != archive_adapter_sha:
+        raise RuntimeError("Observation archive-adapter checkout does not match OBSERVATION_ARCHIVE_ADAPTER_SHA")
+    if git(observation_repo, "status", "--porcelain=v1", "--untracked-files=all", "--", "src"):
+        raise RuntimeError("Observation source tree must be clean for archive adapter acceptance")
 
 try:
     subprocess.run(["node", "--version"], check=True, stdout=subprocess.PIPE)
@@ -351,9 +359,10 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary, ExitSt
             if not archive_path.is_file() or archive_path.is_symlink():
                 raise RuntimeError("World did not produce a regular local Observation archive")
             archive_env = dict(os.environ)
-            # Use the lock-pinned Observation package already installed in the
-            # exact World runtime, not the possibly newer source checkout.
-            archive_env.pop("PYTHONPATH", None)
+            # World captures through its lock-pinned Observation dependency;
+            # the separately pinned current adapter supplies the read route.
+            source_path = str(observation_repo / "src")
+            archive_env["PYTHONPATH"] = source_path + (os.pathsep + archive_env["PYTHONPATH"] if archive_env.get("PYTHONPATH") else "")
             archive_process = subprocess.Popen(
                 [sys.executable, "-m", "observation.archive_http", "--archive", str(archive_path), "--port", str(archive_port)],
                 cwd=state_parent, env=archive_env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
@@ -465,6 +474,7 @@ report = {
     "world_sha": source_revisions["world"],
     "source_revisions": {name: source_revisions[name] for name in ["organism", "embodiment", "environment", "modality", "observation"]},
     "source_pins": pins,
+    "observation_archive_adapter_sha": archive_adapter_sha if archive_acceptance else None,
     "source_checkout_heads": source_checkout_heads,
     "source_pin_available_in_checkout": {name: True for name in pins},
     "profile_id": next((event.get("profile_id") for event in world_events if event.get("event") == "ready"), None),
