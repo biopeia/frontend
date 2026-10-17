@@ -243,6 +243,8 @@ try {
     const coverage = await waitFor("(() => { const value=document.querySelector('#archive-coverage')?.innerText||''; return value.includes('Closure verified:') ? value : null; })()", 'selected capture coverage');
     if (!coverage.includes('not all World history') || /world_run_id|causal tick/i.test(coverage)) throw new Error(`Archive coverage presentation exceeded its bounded claim: ${coverage}`);
     const filterBefore = archiveReads().length;
+    const metadataReadsBeforeFilter = archiveReads().filter(request => request.url.endsWith('/captures')).length;
+    const coverageBeforeFilter = await evaluate("document.querySelector('#archive-coverage')?.innerText || ''");
     const filterState = await evaluate(`(() => {
       const card=document.querySelector('#archive-results .panel');
       const text=card?.innerText||'';
@@ -266,6 +268,11 @@ try {
     }
     if (!filteredReadIssued) throw new Error('Applying archive filters did not issue a new bounded read request');
     const filteredReceipts = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('receipts in this page') && !result.includes('Reading bounded local archive receipts…') ? result : null; })()", 'filtered receipt page');
+    const coverageAfterFilter = await evaluate("document.querySelector('#archive-coverage')?.innerText || ''");
+    const metadataReadsAfterFilter = archiveReads().filter(request => request.url.endsWith('/captures')).length;
+    if (!coverageBeforeFilter || coverageAfterFilter !== coverageBeforeFilter || metadataReadsAfterFilter !== metadataReadsBeforeFilter) {
+      throw new Error('Changing archive receipt filters did not preserve the selected capture coverage without reloading the catalog');
+    }
     const capturedArchiveReads = archiveReads();
     if (capturedArchiveReads.length <= filterBefore || capturedArchiveReads.some(request => request.method !== 'GET')) {
       throw new Error(`Archive UI did not issue a bounded same-origin read-only filter request: ${JSON.stringify(capturedArchiveReads)}`);
