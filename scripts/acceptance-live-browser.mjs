@@ -91,6 +91,7 @@ try {
   };
   await send('Page.enable');
   await send('Runtime.enable');
+  await send('Accessibility.enable');
   await send('Network.enable');
   await send('Page.navigate', {url: origin + '/overview'});
   let connectedAt;
@@ -196,6 +197,11 @@ try {
   const foreign = requests.filter(request => new URL(request.url).origin !== origin);
   if (apiReads.length < 2 || apiReads.some(request => request.method !== 'GET')) throw new Error(`Expected repeated read-only same-origin GETs, got ${JSON.stringify(apiReads)}`);
   if (foreign.length) throw new Error(`Browser contacted a non-same-origin URL: ${JSON.stringify(foreign)}`);
+  const initialAx = await send('Accessibility.getFullAXTree');
+  const initialAxLabels = initialAx.nodes.map(node => node.name?.value).filter(Boolean);
+  for (const label of ['Skip to main content', 'Toggle navigation', 'Refresh current Observation snapshot']) {
+    if (!initialAxLabels.includes(label)) throw new Error(`Browser accessibility tree omitted the accessible name ${JSON.stringify(label)}`);
+  }
   let archiveResult = null;
   if (expectArchive) {
     const archiveReads = () => requests.filter(request => request.url.startsWith(origin + '/api/observation/archive/'));
@@ -209,6 +215,11 @@ try {
       throw new Error(`Archive browser acceptance timed out waiting for ${label}`);
     };
     const initialArchive = await waitFor("(() => { const m=document.querySelector('#archive-metadata')?.innerText||''; const r=document.querySelector('#archive-results')?.innerText||''; return m.includes('captures') && !m.includes('Reading local capture catalog') && !r.includes('Reading bounded local archive receipts…') ? {metadata:m, receipts:r} : null; })()", 'capture catalog and receipt page');
+    const archiveAx = await send('Accessibility.getFullAXTree');
+    const archiveAxLabels = archiveAx.nodes.map(node => node.name?.value).filter(Boolean);
+    for (const label of ['Owner', 'Family', 'Revision', 'Apply filters']) {
+      if (!archiveAxLabels.includes(label)) throw new Error(`Archive browser accessibility tree omitted ${JSON.stringify(label)}`);
+    }
     const captureButtons = await evaluate("[...document.querySelectorAll('[data-archive-coverage]')].map(button=>button.getAttribute('data-archive-coverage'))");
     const receiptCards = await evaluate("[...document.querySelectorAll('#archive-results .panel')].map(card=>card.innerText)");
     if (!captureButtons.length || !receiptCards.length) throw new Error('Archive browser acceptance requires a real non-empty capture catalog and receipt page');
@@ -230,8 +241,10 @@ try {
       form.elements.namedItem('owner').value=${JSON.stringify(filterState.owner)};
       form.elements.namedItem('family').value=${JSON.stringify(filterState.family)};
       form.elements.namedItem('revision').value=${JSON.stringify(filterState.revision)};
-      form.requestSubmit();
+      form.elements.namedItem('owner').focus();
     })()`);
+    await send('Input.dispatchKeyEvent', {type:'keyDown', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13});
+    await send('Input.dispatchKeyEvent', {type:'keyUp', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13});
     const filteredReceipts = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('receipts in this page') && !result.includes('Reading bounded local archive receipts…') ? result : null; })()", 'filtered receipt page');
     const capturedArchiveReads = archiveReads();
     if (capturedArchiveReads.length <= filterBefore || capturedArchiveReads.some(request => request.method !== 'GET')) {
@@ -256,7 +269,8 @@ try {
     const archiveForeign = requests.filter(request => new URL(request.url).origin !== origin);
     if (archiveForeign.length) throw new Error(`Archive browser contacted a non-same-origin URL: ${JSON.stringify(archiveForeign)}`);
     archiveResult = {capture_count: captureButtons.length, initial_receipt_count: receiptCards.length,
-      coverage_inspected: true, filtered_results_rendered: true, same_origin_gets: capturedArchiveReads,
+      coverage_inspected: true, filtered_results_rendered: true, keyboard_filter_submission: true,
+      accessible_filter_names: ['Owner', 'Family', 'Revision', 'Apply filters'], same_origin_gets: capturedArchiveReads,
       bounded_coverage_copy: coverage.includes('not all World history'), filtered_status: filteredReceipts.match(/[^\n]*/)?.[0]};
   }
   if (consoleErrors.length) throw new Error(`Browser reported errors or warnings: ${JSON.stringify(consoleErrors)}`);
