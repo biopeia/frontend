@@ -98,7 +98,7 @@ try {
     const unavailable = await evaluate(`(() => ({
       bodyText: document.body.innerText,
       claims: document.querySelectorAll('.claim-card').length,
-      diagnostic: document.querySelector('.notice')?.innerText || ''
+      diagnostic: document.querySelector('#observation-notice')?.innerText || ''
     }))()`);
     if (unavailable.claims !== 0 || !unavailable.diagnostic.includes('READ UNAVAILABLE') ||
         !unavailable.diagnostic.includes('No source-state conclusion')) {
