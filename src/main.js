@@ -174,7 +174,7 @@ let archivePage = null;
 let archiveRequestToken = 0;
 let archiveFilters = {owner:'', family:'', revision:''};
 function archiveFilterForm() {
-  return `<form id="archive-filter-form" role="search" aria-label="Filter archive receipts"><label>Owner <input name="owner" maxlength="256" value="${escapeHtml(archiveFilters.owner)}"></label><label>Family <input name="family" maxlength="256" value="${escapeHtml(archiveFilters.family)}"></label><label>Revision <input name="revision" maxlength="256" value="${escapeHtml(archiveFilters.revision)}"></label><button type="submit">Apply filters</button></form><div id="archive-results" aria-live="polite"></div>`;
+  return `<form id="archive-filter-form" class="archive-filter-form" role="search" aria-label="Filter archive receipts"><label>Owner <input name="owner" maxlength="256" value="${escapeHtml(archiveFilters.owner)}"></label><label>Family <input name="family" maxlength="256" value="${escapeHtml(archiveFilters.family)}"></label><label>Revision <input name="revision" maxlength="256" value="${escapeHtml(archiveFilters.revision)}"></label><button type="submit">Apply filters</button></form><div id="archive-results" aria-live="polite"></div>`;
 }
 async function readArchive(after = 0) {
   const token = ++archiveRequestToken;
