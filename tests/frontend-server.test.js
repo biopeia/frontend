@@ -244,3 +244,18 @@ test('archive proxy rejects oversized adapter responses and unexpected status co
   assert.equal(redirected.status, 503);
   assert.deepEqual(await redirected.json(), {error:'archive_unavailable'});
 });
+
+test('archive proxy preserves bounded adapter query errors without caching', async t => {
+  const upstream = createHttpServer((_req, res) => {
+    res.writeHead(400, {'Content-Type':'application/json'});
+    res.end('{"status":"unsupported_query"}');
+  });
+  const port = await listen(upstream);
+  const frontend = createFrontendServer({archiveUrl:`http://127.0.0.1:${port}`});
+  const frontendPort = await listen(frontend);
+  t.after(async () => { await close(frontend); await close(upstream); });
+  const response = await fetch(`http://127.0.0.1:${frontendPort}/api/observation/archive/receipts?unknown=value`);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {status:'unsupported_query'});
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+});
