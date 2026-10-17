@@ -45,6 +45,8 @@ CHROME_BIN=/usr/bin/google-chrome \
 npm run acceptance:m1
 ```
 
+The live browser leg checks the accessible names of the skip link, mobile navigation toggle, and refresh control. At a 375×812 viewport it also uses keyboard input to verify that Tab reaches the visibly focused skip link, Enter moves focus to the main landmark, the next Tab reaches the mobile menu toggle, and Space opens and closes the nine-route navigation while updating `aria-expanded`. This is a focused browser regression check, not a complete WCAG audit or substitute for screen-reader testing.
+
 The run fails visibly if an input is missing, either dependency SHA differs, the World production composition or Observation bridge is unavailable, the foreign origin is accepted, Chrome does not launch, an unsupported network request occurs, or a browser assertion fails. There is no skip or synthetic fallback.
 
 ## Assertions

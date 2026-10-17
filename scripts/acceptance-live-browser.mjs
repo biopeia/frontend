@@ -267,6 +267,34 @@ try {
   for (const label of ['Skip to main content', 'Toggle navigation', 'Refresh current Observation snapshot']) {
     if (!initialAxLabels.includes(label)) throw new Error(`Browser accessibility tree omitted the accessible name ${JSON.stringify(label)}; observed ${JSON.stringify(initialAxLabels)}`);
   }
+  const pressKey = async (key, code, windowsVirtualKeyCode) => {
+    await send('Input.dispatchKeyEvent', {type:'keyDown', key, code, windowsVirtualKeyCode});
+    await send('Input.dispatchKeyEvent', {type:'keyUp', key, code, windowsVirtualKeyCode});
+  };
+  await evaluate('document.activeElement instanceof HTMLElement && document.activeElement.blur()');
+  await pressKey('Tab', 'Tab', 9);
+  const skipLinkFocus = await evaluate(`(() => ({text:document.activeElement.innerText.trim(), outline:getComputedStyle(document.activeElement).outlineWidth}))()`);
+  if (skipLinkFocus.text !== 'Skip to main content' || skipLinkFocus.outline === '0px') {
+    throw new Error(`Keyboard focus did not expose the skip link: ${JSON.stringify(skipLinkFocus)}`);
+  }
+  await pressKey('Enter', 'Enter', 13);
+  const skipTarget = await evaluate(`({hash:location.hash, activeId:document.activeElement.id})`);
+  if (skipTarget.hash !== '#content' || skipTarget.activeId !== 'content') {
+    throw new Error(`Keyboard skip link did not focus main content: ${JSON.stringify(skipTarget)}`);
+  }
+  await pressKey('Tab', 'Tab', 9);
+  const menuFocused = await evaluate(`document.activeElement.id === 'menu'`);
+  if (!menuFocused) throw new Error('Mobile navigation toggle was not next in keyboard focus order after main content');
+  await pressKey(' ', 'Space', 32);
+  const mobileMenuOpened = await evaluate(`(() => ({expanded:document.querySelector('#menu')?.getAttribute('aria-expanded'), visible:getComputedStyle(document.querySelector('.sidebar')).display, links:document.querySelectorAll('.sidebar nav a').length}))()`);
+  if (mobileMenuOpened.expanded !== 'true' || mobileMenuOpened.visible === 'none' || mobileMenuOpened.links !== 9) {
+    throw new Error(`Keyboard did not open the complete mobile navigation: ${JSON.stringify(mobileMenuOpened)}`);
+  }
+  await pressKey(' ', 'Space', 32);
+  const mobileMenuClosed = await evaluate(`({expanded:document.querySelector('#menu')?.getAttribute('aria-expanded'), visible:getComputedStyle(document.querySelector('.sidebar')).display})`);
+  if (mobileMenuClosed.expanded !== 'false' || mobileMenuClosed.visible !== 'none') {
+    throw new Error(`Keyboard did not close the mobile navigation: ${JSON.stringify(mobileMenuClosed)}`);
+  }
   await send('Emulation.clearDeviceMetricsOverride');
   const currentViewFailureAcceptance = {};
   const assertCurrentViewFailure = async ({name, responseCode, body, failReason, unavailableStatus}) => {
