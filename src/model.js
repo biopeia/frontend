@@ -7,6 +7,8 @@ export const ROUTES = Object.freeze([
   {path:'/timeline', label:'Causal Timeline', title:'Causal Timeline', intro:'Inspect committed World cuts separately from publication and delivery status.'},
   {path:'/sensorimotor', label:'Sensorimotor Trace', title:'Sensorimotor Trace', intro:'Follow only explicit source-published sensorimotor relations.'},
   {path:'/claims', label:'Claim Inspector', title:'Claim Inspector', intro:'Examine the authority, time, revision, provenance and scope of published claims.'},
+  {path:'/research', label:'Research Evidence', title:'Research Evidence', intro:'Inspect scientific admission boundaries without inferring conclusions from runtime observations.'},
+  {path:'/organism', label:'Organism Inspector', title:'Organism Inspector', intro:'Inspect only authorized organism-owned observations; never infer cognition or intent.'},
   {path:'/connection', label:'Connection & Access', title:'Connection & Access', intro:'Review publication access and supported read-only capabilities.'}
 ]);
 export const AVAILABILITY = Object.freeze(['not-configured','loading','available','empty','unknown','denied','unavailable','unsupported','disconnected','stale','incomplete','gap','conflict','error']);
