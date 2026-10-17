@@ -174,7 +174,7 @@ test('last-known claims are explicitly stale after availability failure', () => 
 });
 
 test('receipt history is distinct from unsupported causal timeline and world joins', () => {
-  assert.match(renderScreen(ROUTES.find(route => route.path === '/timeline'), availableSource), /RECEIPT HISTORY · NOT CAUSAL/);
+  assert.match(renderScreen(ROUTES.find(route => route.path === '/archive-receipts'), availableSource), /RECEIPT HISTORY · NOT CAUSAL/);
   assert.match(renderScreen(ROUTES.find(route => route.path === '/worlds'), availableSource), /World discovery, run enumeration/);
   assert.match(renderScreen(ROUTES.find(route => route.path === '/sensorimotor'), availableSource), /No relation contract is available/);
 });
