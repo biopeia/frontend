@@ -5,7 +5,7 @@ import {once} from 'node:events';
 import {mkdtemp, writeFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {createFrontendServer, FRONTEND_CURRENT_PATH, parseLocalBridgeUrl} from '../scripts/frontend-server.js';
+import {createFrontendServer, FRONTEND_CURRENT_PATH, parseLocalBridgeUrl, parseLocalArchiveUrl} from '../scripts/frontend-server.js';
 
 async function listen(server) {
   server.listen(0, '127.0.0.1');
@@ -140,4 +140,31 @@ test('M1 session status with a dead World identity is unavailable, not reported 
   const response = await fetch(`${origin}/api/session/status`, {headers:{Origin:origin}});
   assert.equal(response.status, 404);
   assert.deepEqual(await response.json(), {error:'session_status_unavailable'});
+});
+
+test('archive adapter URL rejects non-loopback and credentialed origins', () => {
+  assert.equal(parseLocalArchiveUrl('http://127.0.0.1:4175').port, '4175');
+  for (const url of ['http://localhost:4175', 'http://192.0.2.1:4175',
+    'https://127.0.0.1:4175', 'http://user@127.0.0.1:4175',
+    'http://127.0.0.1:4175/v2/archive/receipts']) assert.throws(() => parseLocalArchiveUrl(url));
+});
+
+test('archive proxy forwards bounded GET without granting write or cross-origin access', async t => {
+  const upstream = createHttpServer((req, res) => {
+    assert.equal(req.method, 'GET');
+    assert.equal(req.url, '/v2/archive/receipts?limit=1');
+    assert.equal(req.headers.origin, undefined);
+    res.writeHead(200, {'Content-Type':'application/json'});
+    res.end('{"schema":"biopeia.observation.archive-http.v1","status":"results","receipts":[],"has_more":false,"next_after_receipt_sequence":0}');
+  });
+  const port = await listen(upstream);
+  const frontend = createFrontendServer({archiveUrl:`http://127.0.0.1:${port}`});
+  const frontendPort = await listen(frontend);
+  t.after(async () => {await close(frontend); await close(upstream);});
+  const base = `http://127.0.0.1:${frontendPort}`;
+  const ok = await fetch(base + '/api/observation/archive/receipts?limit=1');
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).schema, 'biopeia.observation.archive-http.v1');
+  assert.equal((await fetch(base + '/api/observation/archive/receipts', {method:'POST'})).status, 405);
+  assert.equal((await fetch(base + '/api/observation/archive/receipts', {headers:{Origin:'http://evil.invalid'}})).status, 403);
 });
