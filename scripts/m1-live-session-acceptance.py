@@ -8,7 +8,9 @@ import http.server
 import json
 import os
 import signal
+import socket
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
@@ -44,6 +46,7 @@ observation_repo = Path(required("OBSERVATION_REPO")).resolve()
 expected_observation_sha = required("OBSERVATION_SHA")
 frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://127.0.0.1:4173")
 chrome_bin = os.environ.get("CHROME_BIN", "/usr/bin/google-chrome")
+archive_acceptance = os.environ.get("FRONTEND_ARCHIVE_ACCEPTANCE") == "1"
 
 if git(frontend, "rev-parse", "HEAD") != frontend_sha or git(frontend, "status", "--porcelain=v1", "--untracked-files=all"):
     raise RuntimeError("Frontend candidate changed or is dirty")
@@ -262,6 +265,12 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary, ExitSt
     if not relay_checks["oversized_response_rejected"]:
         raise RuntimeError(f"Relay oversized payload boundary check failed: {relay_checks}")
     browser_ready_path = state_parent / "browser-ready.json"
+    archive_ready_path = state_parent / "archive-adapter-ready"
+    archive_port = None
+    if archive_acceptance:
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            archive_port = reservation.getsockname()[1]
     browser_env = {
         **os.environ,
         "FRONTEND_ROOT": str(frontend),
@@ -271,6 +280,10 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary, ExitSt
         "BROWSER_READY_PATH": str(browser_ready_path),
         "CHROME_CDP_URL": f"http://127.0.0.1:{chrome_port}",
     }
+    if archive_acceptance:
+        browser_env["FRONTEND_ARCHIVE_ACCEPTANCE"] = "1"
+        browser_env["OBSERVATION_ARCHIVE_URL"] = f"http://127.0.0.1:{archive_port}"
+        browser_env["ARCHIVE_ADAPTER_READY_PATH"] = str(archive_ready_path)
     browser_process = subprocess.Popen(
         ["node", str(frontend / "scripts/acceptance-live-browser.mjs")],
         cwd=frontend, env=browser_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -289,6 +302,8 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary, ExitSt
         raise RuntimeError("Browser page was not proven to have polled the relay before World startup")
     browser_attached_at = browser_ready["browser_page_attached_at_utc"]
     command = [str(bridge_bin), "--profile", str(profile_path), "--state-root", str(state_root), "--cycles", "20"]
+    if archive_acceptance:
+        command.append("--archive-observations")
     world_process = subprocess.Popen(command, cwd=world, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     cleanup.callback(stop_process, world_process)
     world_events: list[dict[str, object]] = []
@@ -326,6 +341,39 @@ with tempfile.TemporaryDirectory(prefix="biopeia-m1-live-") as temporary, ExitSt
             if record.get("event") in {"completed", "stopped", "failed"}:
                 terminal = record
         rc = world_process.wait(timeout=30)
+        if archive_acceptance:
+            if terminal is None or terminal.get("event") != "completed":
+                raise RuntimeError(f"Cannot read archive until the real World capture completes: {terminal}")
+            summary = terminal.get("observation_archive")
+            if not isinstance(summary, dict) or summary.get("error") or summary.get("shutdown_error"):
+                raise RuntimeError(f"World archive capture did not close cleanly: {summary}")
+            archive_path = state_root / str(summary.get("path", ""))
+            if not archive_path.is_file() or archive_path.is_symlink():
+                raise RuntimeError("World did not produce a regular local Observation archive")
+            archive_env = dict(os.environ)
+            # Use the lock-pinned Observation package already installed in the
+            # exact World runtime, not the possibly newer source checkout.
+            archive_env.pop("PYTHONPATH", None)
+            archive_process = subprocess.Popen(
+                [sys.executable, "-m", "observation.archive_http", "--archive", str(archive_path), "--port", str(archive_port)],
+                cwd=state_parent, env=archive_env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+            )
+            cleanup.callback(stop_process, archive_process)
+            catalog_url = f"http://127.0.0.1:{archive_port}/v2/archive/captures"
+            catalog = None
+            for _ in range(100):
+                if archive_process.poll() is not None:
+                    stderr = archive_process.stderr.read() if archive_process.stderr else ""
+                    raise RuntimeError(f"Observation archive adapter exited early: {stderr}")
+                try:
+                    with urllib.request.urlopen(catalog_url, timeout=1) as response:
+                        catalog = json.loads(response.read(1_000_001))
+                    break
+                except (OSError, urllib.error.URLError):
+                    time.sleep(0.05)
+            if not isinstance(catalog, dict) or not catalog.get("captures"):
+                raise RuntimeError(f"Real World capture produced no readable Observation archive catalog: {catalog}")
+            archive_ready_path.write_text("ready\n", encoding="utf-8")
         if browser_process is None:
             raise RuntimeError("World never emitted ready; browser was not started")
         browser_stdout, browser_stderr = browser_process.communicate(timeout=70)
