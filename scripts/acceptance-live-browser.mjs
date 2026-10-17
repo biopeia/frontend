@@ -257,10 +257,23 @@ try {
         await evaluate("document.querySelectorAll('.claim-card').length") !== retainedBefore) {
       throw new Error(`Current-view ${name} failure did not retain the last valid snapshot with explicit stale status: ${failureNotice}`);
     }
-    const failureAx = await send('Accessibility.getFullAXTree');
-    const statusNodes = failureAx.nodes.filter(node => node.role?.value === 'status');
-    const staleTextExposed = failureAx.nodes.some(node => (node.name?.value || '').includes('LAST KNOWN · STALE'));
-    if (!statusNodes.length || !staleTextExposed) throw new Error(`Current-view ${name} failure was not exposed through the accessible status live region: ${JSON.stringify({statusNodes: statusNodes.map(node => ({name: node.name?.value, value: node.value?.value})), staleTextNodes: failureAx.nodes.filter(node => (node.name?.value || '').includes('LAST KNOWN')).map(node => ({role: node.role?.value, name: node.name?.value}))})}`);
+    const noticeObject = await send('Runtime.evaluate', {
+      expression: "document.querySelector('#observation-notice')",
+      objectGroup: 'current-view-failure-notice',
+      returnByValue: false,
+    });
+    const noticeObjectId = noticeObject.result?.objectId;
+    if (!noticeObjectId) throw new Error('Current-view notice element is missing from the browser DOM');
+    let failureAx;
+    try {
+      failureAx = await send('Accessibility.getPartialAXTree', {objectId: noticeObjectId, fetchRelatives: false});
+    } finally {
+      await send('Runtime.releaseObjectGroup', {objectGroup: 'current-view-failure-notice'});
+    }
+    const statusNode = failureAx.nodes.find(node => node.role?.value === 'status');
+    const staleTextExposed = failureAx.nodes.some(node =>
+      `${node.name?.value || ''} ${node.value?.value || ''}`.includes('LAST KNOWN · STALE'));
+    if (!statusNode || !staleTextExposed) throw new Error(`Current-view ${name} notice was not exposed as a status live region containing the stale notice: ${JSON.stringify({nodes: failureAx.nodes.map(node => ({role: node.role?.value, name: node.name?.value, value: node.value?.value}))})}`);
     currentViewFailureAcceptance[name] = true;
   };
   await assertCurrentViewFailure({name: 'malformed', responseCode: 200, body: '{', unavailableStatus: 'error'});
