@@ -541,6 +541,46 @@ try {
       injected_archive_disconnect_rendered: true,
       filtered_status: filteredReceipts.match(/[^\n]*/)?.[0]};
   }
+  const responsiveRouteBefore = await evaluate('location.pathname');
+  await send('Emulation.setDeviceMetricsOverride', {width:320, height:800, deviceScaleFactor:1, mobile:true});
+  const responsivePaths = await evaluate("[...document.querySelectorAll('.sidebar nav a[data-nav]')].map(link=>link.getAttribute('href'))");
+  if (responsivePaths.length !== 9 || new Set(responsivePaths).size !== responsivePaths.length) {
+    throw new Error(`Expected nine unique observatory routes for narrow-screen reflow acceptance, got ${JSON.stringify(responsivePaths)}`);
+  }
+  const responsiveReflow = [];
+  const readReflow = async label => {
+    const state = await evaluate(`(() => {
+      const width = document.documentElement.scrollWidth;
+      const viewport = document.documentElement.clientWidth;
+      const overflowing = [...document.querySelectorAll('body *')]
+        .filter(element => element.getBoundingClientRect().right > viewport + 1)
+        .slice(0, 5).map(element => ({tag:element.tagName, className:typeof element.className === 'string' ? element.className : '',
+          right:Math.round(element.getBoundingClientRect().right)}));
+      return {path:location.pathname, viewport, document_width:width, overflowing};
+    })()`);
+    if (state.document_width > state.viewport) {
+      throw new Error(`Narrow-screen horizontal overflow at ${label}: ${JSON.stringify(state)}`);
+    }
+    responsiveReflow.push({path:state.path, state:label, viewport:state.viewport, document_width:state.document_width});
+  };
+  for (const path of responsivePaths) {
+    await evaluate(`document.querySelector('.sidebar nav a[data-nav][href=${JSON.stringify(path)}]')?.click()`);
+    if (await evaluate('location.pathname') !== path) throw new Error(`Responsive route navigation did not reach ${path}`);
+    await readReflow('route');
+    if (path === '/spatial') {
+      const disclosure = await evaluate("Boolean(document.querySelector('.spatial-inspector'))");
+      if (!disclosure) throw new Error('Spatial provenance disclosure was missing during responsive reflow acceptance');
+      await evaluate("document.querySelector('.spatial-inspector').open = false");
+      await readReflow('spatial-disclosure-closed');
+      await evaluate("document.querySelector('.spatial-inspector').open = true");
+      await readReflow('spatial-disclosure-open');
+      await evaluate("document.querySelector('.spatial-inspector').open = false");
+    }
+  }
+  await evaluate(`document.querySelector('.sidebar nav a[data-nav][href=${JSON.stringify(responsiveRouteBefore)}]')?.click()`);
+  await send('Emulation.setDeviceMetricsOverride', {width:375, height:812, deviceScaleFactor:1, mobile:true});
+  const responsiveForeign = requests.filter(request => new URL(request.url).origin !== origin);
+  if (responsiveForeign.length) throw new Error(`Responsive route acceptance contacted a non-same-origin URL: ${JSON.stringify(responsiveForeign)}`);
   if (consoleErrors.length) throw new Error(`Browser reported errors or warnings: ${JSON.stringify(consoleErrors)}`);
   const screenshot = await send('Page.captureScreenshot', {format: 'png', captureBeyondViewport: false});
   const screenshotBytes = Buffer.from(screenshot.data, 'base64');
@@ -553,6 +593,7 @@ try {
     read_requests: apiReads, non_same_origin_requests: foreign, read_only_gets: true,
     current_view_failure_acceptance: currentViewFailureAcceptance, current_view_recovered: currentViewRecovered,
     keyboard_navigation_acceptance: {skip_link_focus_and_activation: true, mobile_menu_space_toggle: true},
+    responsive_reflow_acceptance: responsiveReflow,
     archive_acceptance: archiveResult,
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));
 } finally {
