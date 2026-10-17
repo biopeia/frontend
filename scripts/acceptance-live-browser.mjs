@@ -200,7 +200,7 @@ try {
   const initialAx = await send('Accessibility.getFullAXTree');
   const initialAxLabels = initialAx.nodes.map(node => node.name?.value).filter(Boolean);
   for (const label of ['Skip to main content', 'Toggle navigation', 'Refresh current Observation snapshot']) {
-    if (!initialAxLabels.includes(label)) throw new Error(`Browser accessibility tree omitted the accessible name ${JSON.stringify(label)}`);
+    if (!initialAxLabels.includes(label)) throw new Error(`Browser accessibility tree omitted the accessible name ${JSON.stringify(label)}; observed ${JSON.stringify(initialAxLabels)}`);
   }
   let archiveResult = null;
   if (expectArchive) {
