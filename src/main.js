@@ -14,6 +14,7 @@ let theme = initialTheme === 'light' || initialTheme === 'dark' ? initialTheme :
 let session = {status:'unknown'};
 let menuOpen = false;
 let shellMounted = false;
+let selectedClaimFamily = '';
 const spatialRenderController = createSpatialRenderController({mount: mountSpatialExplorer});
 
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -131,7 +132,7 @@ function renderObservationScreen(route, source, {replaceRoute = false} = {}) {
     anchorNode: selection.anchorNode, anchorOffset: selection.anchorOffset,
     focusNode: selection.focusNode, focusOffset: selection.focusOffset,
   } : null;
-  const next = renderScreen(route, source);
+  const next = renderScreen(route, source, {claimFamily: selectedClaimFamily});
   if (screen) {
     if (replaceRoute || !screen.querySelector('[data-observation-region]')) {
       patchHtml(screen, next);
@@ -215,6 +216,11 @@ const observationStore = createObservationStore({initialState: initialSource});
 function mount() {
   if (shellMounted) return;
   renderShell(observationStore.getState());
+  app.addEventListener('change', event => {
+    if (event.target?.id !== 'claim-family-filter') return;
+    selectedClaimFamily = event.target.value;
+    renderRoute();
+  });
   app.addEventListener('click', event => {
     const navLink = event.target.closest('a[data-nav]');
     if (navLink) {
