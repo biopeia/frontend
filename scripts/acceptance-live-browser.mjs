@@ -257,6 +257,10 @@ try {
         await evaluate("document.querySelectorAll('.claim-card').length") !== retainedBefore) {
       throw new Error(`Current-view ${name} failure did not retain the last valid snapshot with explicit stale status: ${failureNotice}`);
     }
+    const failureAx = await send('Accessibility.getFullAXTree');
+    const statusExposed = failureAx.nodes.some(node => node.role?.value === 'status' &&
+      (node.name?.value || '').includes('LAST KNOWN · STALE'));
+    if (!statusExposed) throw new Error(`Current-view ${name} failure was not exposed through the accessible status live region`);
     currentViewFailureAcceptance[name] = true;
   };
   await assertCurrentViewFailure({name: 'malformed', responseCode: 200, body: '{', unavailableStatus: 'error'});
