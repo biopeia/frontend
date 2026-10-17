@@ -197,6 +197,6 @@ export function renderScreen(route, source) {
       return `<div data-observation-region="connection-metrics"><div class="metric-grid">${panel('Local Observation read', item('Availability', tag) + item('Endpoint', '/api/observation/current') + item('Method', 'GET · read only'), tag)}${panel('Scope and guarantees', item('Subset', source.scope ?? 'Not established') + item('Freshness', source.freshness ?? 'Not established') + item('Cross-owner coherence', source.coherence ?? 'Not established'), 'LIMITED')}${panel('Unsupported capabilities', item('History / persistence', 'Not supported') + item('Runtime control', 'Not supported') + item('Source census', 'Not supported'), 'OUT OF SCOPE')}</div></div><div data-observation-region="connection-diagnostic">${panel('Read diagnostic', `<p role="status">${esc(description)}</p><p class="fine">A valid empty view, denied read, error, or disconnected bridge is never presented as proof that a World, body, organism, resource, or publication does not exist.</p>`, 'PASSIVE')}</div><div data-observation-region="claims">${claimsSection(source, {title: 'Messages in the current read'})}</div>`;
     }
     default:
-      return note('Unrecognized route', 'Use one of the seven supported application routes.');
+      return note('Unrecognized route', 'Use a supported observatory route.');
   }
 }
