@@ -181,7 +181,7 @@ test('archive proxy forwards capture catalog and bounded coverage without causal
     if (req.url === '/v2/archive/coverage?capture_id=capture-1') return res.end(JSON.stringify({
       schema:'biopeia.observation.archive-http.v1',status:'results',
       coverage:{capture_id:'capture-1',status:'closed_verified',closure_verified:true,
-        complete:false,received_not_persisted:1,known_source_gaps:1,unverifiable_intervals:[[2,2],[4,null]],known_source_gaps:[[3,3,'source gap']],received_not_persisted:[[1,1,'write failed']]},
+        complete:false,unverifiable_intervals:[[2,2],[4,null]],known_source_gaps:[[3,3,'source gap']],received_not_persisted:[[1,1,'write failed']]},
     }));
     res.writeHead(404);
     res.end(JSON.stringify({status:'not_found'}));

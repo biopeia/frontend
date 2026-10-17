@@ -208,3 +208,13 @@ test('archive view exposes bounded capture metadata and receipts separately', ()
   assert.match(html, /id="archive-history"/);
   assert.match(html, /NOT CAUSAL/);
 });
+
+test('archive current messages can be filtered locally by present claim family', () => {
+  const route = ROUTES.find(route => route.path === '/archive-receipts');
+  const source = {...availableSource, claims: [bodyPose, scalarField]};
+  const html = renderScreen(route, source, {claimFamily: 'embodiment.body_pose'});
+  assert.match(html, /id="claim-family-filter"/);
+  assert.match(html, /Displaying 1 of 2 retained claims/);
+  assert.match(html, /value="embodiment\.body_pose" selected/);
+  assert.doesNotMatch(html, /<h2>environment\.finite_scalar_field<\/h2>/);
+});

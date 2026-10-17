@@ -1,12 +1,13 @@
-import {mkdir,readFile,writeFile,copyFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,copyFile,rm} from 'node:fs/promises';
 import {join} from 'node:path';
-const out='dist';await mkdir(join(out,'assets'),{recursive:true});
+const out='dist';await rm(out,{recursive:true,force:true});await mkdir(join(out,'assets'),{recursive:true});
 let html=await readFile('index.html','utf8');
 html=html.replace('<script type="module" src="/src/main.js"></script>','<link rel="stylesheet" href="/assets/style.css"><script type="module" src="/assets/main.js"></script>');
 await writeFile(join(out,'index.html'),html);
 let main=await readFile('src/main.js','utf8');
 main=main.replace("import './style.css';",'');
 await writeFile(join(out,'assets/main.js'),main);
+await copyFile('src/archive-intervals.js',join(out,'assets/archive-intervals.js'));
 await copyFile('src/model.js',join(out,'assets/model.js'));
 await copyFile('src/views.js',join(out,'assets/views.js'));
 await copyFile('src/spatial-renderer.js',join(out,'assets/spatial-renderer.js'));
