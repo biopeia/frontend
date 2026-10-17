@@ -130,12 +130,53 @@ function proxyCurrent(req, res, server, bridgeUrl) {
   upstream.end();
 }
 
-export function createFrontendServer({root = 'dist', bridgeUrl = process.env.OBSERVATION_BRIDGE_URL || 'http://127.0.0.1:4174/v1/current', sessionStatusFile = process.env.BIOPEIA_M1_SESSION_STATUS_FILE} = {}) {
+
+const ARCHIVE_PREFIX = '/api/observation/archive/';
+export function parseLocalArchiveUrl(value = 'http://127.0.0.1:4175') {
+  const url = new URL(value);
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/' || url.username || url.password || url.search || url.hash) throw new TypeError('Archive adapter must be an exact local loopback origin');
+  return url;
+}
+function proxyArchive(req, res, server, archiveUrl) {
+  if (req.headers.host !== expectedHost(server)) return sendJson(res, 400, 'invalid_host');
+  if ((req.headers.origin !== undefined && req.headers.origin !== originFor(server)) ||
+      (req.headers['sec-fetch-site'] !== undefined && req.headers['sec-fetch-site'] !== 'same-origin')) return sendJson(res, 403, 'origin_denied');
+  if (req.method !== 'GET' || hasRequestBody(req)) return sendJson(res, 405, 'method_not_allowed');
+  const incoming = new URL(req.url, originFor(server));
+  const endpoint = incoming.pathname.slice(ARCHIVE_PREFIX.length);
+  if (!['captures', 'coverage', 'receipts'].includes(endpoint) || req.url.length > 2048) return sendJson(res, 400, 'invalid_archive_query');
+  const target = new URL('/v2/archive/' + endpoint + incoming.search, archiveUrl);
+  const upstream = httpRequest(target, {method:'GET',headers:{Accept:'application/json',Host:target.host,Connection:'close'}});
+  let settled = false;
+  const fail = (status, code) => {
+    if (settled || res.destroyed) return;
+    settled = true; upstream.destroy(); sendJson(res,status,code);
+  };
+  upstream.setTimeout(1500, () => fail(503,'archive_unavailable'));
+  upstream.on('error', () => fail(503,'archive_unavailable'));
+  upstream.on('response', response => {
+    if (![200,400,404,414,503].includes(response.statusCode)) { response.resume(); return fail(503,'archive_unavailable'); }
+    const chunks=[]; let size=0;
+    response.on('data', chunk => { size+=chunk.length; if(size>MAX_BRIDGE_RESPONSE_BYTES) return fail(413,'archive_response_too_large'); chunks.push(chunk); });
+    response.on('error',()=>fail(503,'archive_unavailable'));
+    response.on('end',()=>{
+      if(settled||res.destroyed)return;
+      settled=true;const body=Buffer.concat(chunks);
+      res.writeHead(response.statusCode,{'Content-Type':'application/json; charset=utf-8','Content-Length':body.length,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Connection':'close'});
+      res.end(body);
+    });
+  });
+  upstream.end();
+}
+
+export function createFrontendServer({root = 'dist', bridgeUrl = process.env.OBSERVATION_BRIDGE_URL || 'http://127.0.0.1:4174/v1/current', sessionStatusFile = process.env.BIOPEIA_M1_SESSION_STATUS_FILE, archiveUrl = process.env.OBSERVATION_ARCHIVE_URL || 'http://127.0.0.1:4175'} = {}) {
   const staticRoot = resolve(root);
   const localBridgeUrl = parseLocalBridgeUrl(bridgeUrl);
+  const localArchiveUrl = parseLocalArchiveUrl(archiveUrl);
   const server = createHttpServer(async (req, res) => {
     let url;
     try { url = new URL(req.url, 'http://127.0.0.1'); } catch { return sendJson(res, 400, 'invalid_request'); }
+    if (url.pathname.startsWith(ARCHIVE_PREFIX)) return proxyArchive(req, res, server, localArchiveUrl);
     if (url.pathname === FRONTEND_PATH) return proxyCurrent(req, res, server, localBridgeUrl);
     if (url.pathname === SESSION_PATH) return void sessionStatus(req, res, server, sessionStatusFile);
     if (url.pathname.startsWith('/api/')) return sendJson(res, 404, 'not_found');

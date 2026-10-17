@@ -80,15 +80,19 @@ function claimCard(claim) {
   </div></article>`;
 }
 
-function claimsSection(source, {title = 'Independent owner publications', emptyTitle = 'No approved claims retained'} = {}) {
+function claimsSection(source, {title = 'Independent owner publications', emptyTitle = 'No approved claims retained', selectedFamily = ''} = {}) {
   if (!source.claims.length) {
     const copy = source.status === 'empty' ? 'The approved bounded current subset contains no retained messages.' :
       source.status === 'unsupported' ? 'The response contained no claim family supported by this Frontend slice.' :
       'No validated current Observation messages are available in this read.';
     return panel(title, note(emptyTitle, copy, source.status.toUpperCase()), source.status.toUpperCase());
   }
+  const families = [...new Set(source.claims.map(claim => claim.family))].sort();
+  const selected = families.includes(selectedFamily) ? selectedFamily : '';
+  const visible = selected ? source.claims.filter(claim => claim.family === selected) : source.claims;
+  const filter = `<label for="claim-family-filter">Filter by source claim family</label><select id="claim-family-filter" aria-label="Filter claim families"><option value="">All supported families (${source.claims.length})</option>${families.map(family => `<option value="${esc(family)}" ${selected === family ? 'selected' : ''}>${esc(family)} (${source.claims.filter(claim => claim.family === family).length})</option>`).join('')}</select><p class="fine" role="status">Displaying ${visible.length} of ${source.claims.length} retained claims; filtering is local to this bounded read, not a source query.</p>`;
   const staleNotice = source.stale ? '<p class="fine stale-label"><strong>LAST KNOWN · STALE</strong> These retained claims are not a current Observation view.</p>' : '';
-  return panel(title, `${staleNotice}<p class="fine">These are separate owner claims from one bounded current view. They are not joined into a shared snapshot, and delivery order is not causal order.</p><div class="claim-grid">${source.claims.map(claimCard).join('')}</div>`, source.stale ? 'STALE · LAST KNOWN' : 'READ ONLY');
+  return panel(title, `${staleNotice}${title === 'Claim inspection' ? filter : ''}<p class="fine">These are separate owner claims from one bounded current view. They are not joined into a shared snapshot, and delivery order is not causal order.</p><div class="claim-grid">${visible.map(claimCard).join('')}</div>`, source.stale ? 'STALE · LAST KNOWN' : 'READ ONLY');
 }
 
 function coordinateMarker(claim, stale) {
@@ -164,7 +168,7 @@ function connectionState(source) {
   return labels[source.status] ?? ['UNKNOWN', 'Availability is not established.'];
 }
 
-export function renderScreen(route, source) {
+export function renderScreen(route, source, options = {}) {
   const claims = source.claims.length;
   switch (route.path) {
     case '/worlds':
@@ -183,16 +187,20 @@ export function renderScreen(route, source) {
       return `<section class="panel"><div class="panel-heading"><h2>Spatial Explorer · owner projections</h2><span class="small-tag">READ ONLY · SEPARATE DOMAINS</span></div><div class="panel-body" id="spatial-explorer"></div></section>${panel('Spatial evidence boundary', `<p id="spatial-evidence-status" role="status">${source.stale ? 'Last validated spatial projections retained in memory · stale; current source availability is not established.' : source.status === 'available' && hasSpatial ? 'Current bounded Observation read; claims remain separate and no shared causal scene is implied.' : 'No validated spatial descriptor is present in the retained Observation subset.'}</p><p class="fine">Only uniquely identified, validated Environment and Embodiment geometry descriptors are rendered. Missing or ambiguous claims remain unavailable; no geometry or transform is inferred.</p>`, source.stale ? 'STALE · LAST KNOWN' : hasSpatial ? 'OWNER DATA' : 'UNAVAILABLE')}<details class="spatial-diagnostics"><summary>Inspect separate owner claims and provenance</summary><div data-observation-region="claims">${claimsSection(source, {title: 'Spatially relevant owner claims'})}</div></details>`;
     }
     case '/timeline':
-      return `${panel('Causal history', note('Historical timeline not supported', 'The current-view endpoint is bounded and in-memory. Its local delivery sequence is not World causal time and cannot reconstruct committed-cut history.'), 'NO HISTORY')}<div data-observation-region="claims">${claimsSection(source, {title: 'Current messages · not a timeline'})}</div>`;
+      return `${panel('Local archive receipts', '<div id="archive-history" role="region" aria-label="Bounded historical Observation receipts">Local archive read has not completed. Archive receipt order is not causal time.</div>', 'RECEIPT HISTORY · NOT CAUSAL')}<div data-observation-region="claims">${claimsSection(source, {title: 'Current messages · not a timeline'})}</div>`;
     case '/sensorimotor':
       return `${panel('Source-asserted relations', note('No relation contract is available in M1', 'The two admitted claim families do not assert a sensorimotor relationship. No correlation or causal link is inferred from values, frames, identifiers, or delivery order.'), 'NO LINKS')}<div data-observation-region="claims">${claimsSection(source, {title: 'Unjoined source claims'})}</div>`;
     case '/claims':
-      return `<div data-observation-region="claims">${claimsSection(source, {title: 'Claim inspection', emptyTitle: 'No validated claim to inspect'})}</div>`;
+      return `<div data-observation-region="claims">${claimsSection(source, {title: 'Claim inspection', emptyTitle: 'No validated claim to inspect', selectedFamily: options.claimFamily ?? ''})}</div>`;
+    case '/organism':
+      return `${panel('Organism evidence', note('Organism-owned observation contract unavailable', 'The current authorized read adapter does not expose longitudinal cognitive, experiential, or executive state. Motion and weight changes cannot establish learning, intention, or cognition.'), 'NO ORGANISM CLAIMS')}<div data-observation-region="claims">${claimsSection(source, {title: 'Current publications · not organism cognition'})}</div>`;
+    case '/research':
+      return `${panel('Scientific evidence admission', note('Lab evidence adapter not authorized', 'No approved Lab research read contract is wired to this frontend. Experimental results, provenance digests, independent reproductions and admission decisions cannot be inferred from World or Observation publications.'), 'NO LAB ADAPTER')}${panel('Interpretation rules', guide(['Exploratory evidence remains exploratory until a competent scientific disposition is recorded.', 'A reproduced result is not automatically admitted by Lab.', 'Observation delivery and World commits do not authorize experimental interventions.']), 'SCIENTIFIC BOUNDARY')}`;
     case '/connection': {
       const [tag, description] = connectionState(source);
       return `<div data-observation-region="connection-metrics"><div class="metric-grid">${panel('Local Observation read', item('Availability', tag) + item('Endpoint', '/api/observation/current') + item('Method', 'GET · read only'), tag)}${panel('Scope and guarantees', item('Subset', source.scope ?? 'Not established') + item('Freshness', source.freshness ?? 'Not established') + item('Cross-owner coherence', source.coherence ?? 'Not established'), 'LIMITED')}${panel('Unsupported capabilities', item('History / persistence', 'Not supported') + item('Runtime control', 'Not supported') + item('Source census', 'Not supported'), 'OUT OF SCOPE')}</div></div><div data-observation-region="connection-diagnostic">${panel('Read diagnostic', `<p role="status">${esc(description)}</p><p class="fine">A valid empty view, denied read, error, or disconnected bridge is never presented as proof that a World, body, organism, resource, or publication does not exist.</p>`, 'PASSIVE')}</div><div data-observation-region="claims">${claimsSection(source, {title: 'Messages in the current read'})}</div>`;
     }
     default:
-      return note('Unrecognized route', 'Use one of the seven supported application routes.');
+      return note('Unrecognized route', 'Use a supported observatory route.');
   }
 }

@@ -14,6 +14,7 @@ let theme = initialTheme === 'light' || initialTheme === 'dark' ? initialTheme :
 let session = {status:'unknown'};
 let menuOpen = false;
 let shellMounted = false;
+let selectedClaimFamily = '';
 const spatialRenderController = createSpatialRenderController({mount: mountSpatialExplorer});
 
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -49,7 +50,7 @@ function notice(source) {
   return `<strong>${title}</strong><span>${description}</span>`;
 }
 function sidebar(route, source) {
-  return `<aside class="sidebar ${menuOpen ? 'open' : ''}" aria-label="Primary navigation"><a href="/worlds" data-nav class="brand" aria-label="Biopeia Worlds and Runs"><span class="brandmark">◈</span><span><strong>BIOPEIA</strong><small>OBSERVATION</small></span></a><div class="nav-label">EXPLORE</div><nav aria-label="Seven peer-level screens">${ROUTES.map((r,i)=>`<a data-nav href="${r.path}" ${route.path===r.path?'aria-current="page"':''}><span class="nav-numeral">0${i+1}</span><span>${r.label}</span></a>`).join('')}</nav><div class="sidebar-footer"><span class="status-dot" aria-hidden="true"></span><span id="sidebar-status">${escapeHtml(statusText(source))}</span><p>Passive visualization only</p></div></aside>`;
+  return `<aside class="sidebar ${menuOpen ? 'open' : ''}" aria-label="Primary navigation"><a href="/worlds" data-nav class="brand" aria-label="Biopeia Worlds and Runs"><span class="brandmark brand-logo" aria-hidden="true">B</span><span><strong>BIOPEIA</strong><small>OBSERVATION</small></span></a><div class="nav-label">EXPLORE</div><nav aria-label="Biopeia observatory screens">${ROUTES.map((r,i)=>`<a data-nav href="${r.path}" ${route.path===r.path?'aria-current="page"':''}><span class="nav-numeral">0${i+1}</span><span>${r.label}</span></a>`).join('')}</nav><div class="sidebar-footer"><span class="status-dot" aria-hidden="true"></span><span id="sidebar-status">${escapeHtml(statusText(source))}</span><p>Passive visualization only</p></div></aside>`;
 }
 function lastChecked(source) {
   const raw = source.lastCheckedAt ?? source.lastAttemptAt;
@@ -108,6 +109,38 @@ function patchHtml(current, html) {
   template.innerHTML = html;
   patchChildren(current, template.content);
 }
+
+let archivePage = null;
+let archiveRequestToken = 0;
+async function readArchive(after = 0) {
+  const token = ++archiveRequestToken;
+  const target = document.querySelector('#archive-history');
+  if (!target) return;
+  target.textContent = 'Reading bounded local archive receipts…';
+  try {
+    const response = await fetch('/api/observation/archive/receipts?limit=25&after=' + after, {cache:'no-store',credentials:'same-origin'});
+    if (!response.ok) throw new Error('Archive read unavailable (' + response.status + ')');
+    const payload = await response.json();
+    if (payload.schema !== 'biopeia.observation.archive-http.v1' || !Array.isArray(payload.receipts) ||
+        typeof payload.has_more !== 'boolean' || !Number.isSafeInteger(payload.next_after_receipt_sequence)) throw new Error('Unsupported archive response');
+    if (token !== archiveRequestToken || getRoute().path !== '/timeline') return;
+    archivePage = payload;
+    target.innerHTML = '<p class="fine">Local receipt order only; not World causal time or proof of complete history. No World/run join is inferred.</p>' +
+      '<p role="status">' + escapeHtml(payload.status) + ' · ' + payload.receipts.length + ' receipts in this page</p>' +
+      '<div class="claim-grid">' + payload.receipts.map(r => '<article class="panel"><div class="panel-body">' +
+        '<strong>' + escapeHtml(r.family) + '</strong><p>Authority: ' + escapeHtml(r.authority) +
+        ' · Revision: ' + escapeHtml(r.revision) + '</p><p>Local receipt: ' + escapeHtml(r.receipt_sequence) +
+        ' · Capture: ' + escapeHtml(r.capture_id ?? 'not asserted') + ' · Source delivery: ' +
+        escapeHtml(r.source_sequence ?? 'not asserted') + '</p><p class="fine">Digest: ' +
+        escapeHtml(r.content_sha256) + '</p></div></article>').join('') + '</div>' +
+      (payload.has_more ? '<button type="button" id="archive-next">Next receipt page</button>' : '<p class="fine">No further receipts in this bounded query; this does not establish complete source history.</p>');
+  } catch (error) {
+    if (token === archiveRequestToken && getRoute().path === '/timeline') {
+      target.textContent = error.message + '. The current-view data remains independent.';
+    }
+  }
+}
+
 function renderRoute(source = observationStore.getState()) {
   const route = getRoute();
   document.title = `${route.label} · Biopeia`;
@@ -120,6 +153,7 @@ function renderRoute(source = observationStore.getState()) {
     }
   });
   renderObservationScreen(route, source, {replaceRoute: true});
+  if (route.path === '/timeline') void readArchive(0);
 }
 function renderObservationScreen(route, source, {replaceRoute = false} = {}) {
   const screen = document.querySelector('#observation-screen');
@@ -131,7 +165,7 @@ function renderObservationScreen(route, source, {replaceRoute = false} = {}) {
     anchorNode: selection.anchorNode, anchorOffset: selection.anchorOffset,
     focusNode: selection.focusNode, focusOffset: selection.focusOffset,
   } : null;
-  const next = renderScreen(route, source);
+  const next = renderScreen(route, source, {claimFamily: selectedClaimFamily});
   if (screen) {
     if (replaceRoute || !screen.querySelector('[data-observation-region]')) {
       patchHtml(screen, next);
@@ -188,7 +222,7 @@ function renderShell(source) {
   const route = getRoute();
   document.documentElement.dataset.theme = theme;
   document.title = `${route.label} · Biopeia`;
-  app.innerHTML = `<a class="skip-link" href="#content">Skip to main content</a><div class="app-shell">${sidebar(route, source)}<div class="app-main"><header class="topbar"><button type="button" class="menu-button" id="menu" aria-label="Toggle navigation" aria-expanded="${menuOpen}">☰</button><span>Independent observation workspace</span><div class="top-actions"><span id="connection-indicator" class="connection-indicator" aria-live="polite">● ${escapeHtml(statusText(source))}</span>${lastChecked(source)}<button id="refresh" type="button" aria-label="Refresh current Observation snapshot">Refresh read</button><button id="theme" type="button" aria-label="Switch to ${theme==='light'?'dark':'light'} theme">${theme==='light'?'Dark':'Light'} theme</button></div></header><main id="content" tabindex="-1"><div class="page-heading"><div><div class="eyebrow">BIOPEIA / OBSERVATION</div><h1 id="page-title"></h1><p id="page-intro"></p></div><span class="mode-chip">READ ONLY · M1</span></div><div class="notice" id="session-panel" role="status" aria-live="polite">${sessionPanel(session)}</div><div class="notice" id="observation-notice" role="status" aria-live="polite">${notice(source)}</div><div id="observation-screen"></div><footer>Biopeia · Independent passive presentation · No causal controls · No experimental evidence admission</footer></main></div></div>`;
+  app.innerHTML = `<a class="skip-link" href="#content">Skip to main content</a><div class="app-shell">${sidebar(route, source)}<div class="app-main"><header class="topbar"><button type="button" class="menu-button" id="menu" aria-label="Toggle navigation" aria-expanded="${menuOpen}">☰</button><span>Independent observation workspace</span><div class="top-actions"><span id="connection-indicator" class="connection-indicator" aria-live="polite">● ${escapeHtml(statusText(source))}</span>${lastChecked(source)}<button id="refresh" type="button" aria-label="Refresh current Observation snapshot">Refresh read</button><button id="theme" type="button" aria-label="Switch to ${theme==='light'?'dark':'light'} theme">${theme==='light'?'Dark':'Light'} theme</button></div></header><main id="content" tabindex="-1"><div class="page-heading"><div><div class="eyebrow">BIOPEIA / OBSERVATION</div><h1 id="page-title"></h1><p id="page-intro"></p></div><span class="mode-chip">V2 CANDIDATE · READ ONLY</span></div><div class="notice" id="session-panel" role="status" aria-live="polite">${sessionPanel(session)}</div><div class="notice" id="observation-notice" role="status" aria-live="polite">${notice(source)}</div><div id="observation-screen"></div><footer>Biopeia · Independent passive presentation · No causal controls · No experimental evidence admission</footer></main></div></div>`;
   renderRoute(source);
   shellMounted = true;
 }
@@ -215,6 +249,11 @@ const observationStore = createObservationStore({initialState: initialSource});
 function mount() {
   if (shellMounted) return;
   renderShell(observationStore.getState());
+  app.addEventListener('change', event => {
+    if (event.target?.id !== 'claim-family-filter') return;
+    selectedClaimFamily = event.target.value;
+    renderRoute();
+  });
   app.addEventListener('click', event => {
     const navLink = event.target.closest('a[data-nav]');
     if (navLink) {
@@ -226,6 +265,10 @@ function mount() {
       document.querySelector('#menu').setAttribute('aria-expanded','false');
       renderRoute();
       document.getElementById('content').focus();
+      return;
+    }
+    if (event.target.closest('#archive-next')) {
+      if (archivePage?.has_more) void readArchive(archivePage.next_after_receipt_sequence);
       return;
     }
     if (event.target.closest('#theme')) {

@@ -60,9 +60,9 @@ function spatialClaim(family, value) {
   };
 }
 
-test('all seven peer routes render without inventing a World or run join', () => {
+test('all nine observatory routes render without inventing a World or run join', () => {
   const html = ROUTES.map(route => renderScreen(route, availableSource));
-  assert.equal(new Set(html).size, 7);
+  assert.equal(new Set(html).size, 9);
   for (const page of html) {
     assert.ok(!page.includes('runtime_tick_events'));
     assert.ok(!page.includes('Committed World revision: 12'));
@@ -173,8 +173,20 @@ test('last-known claims are explicitly stale after availability failure', () => 
   assert.match(html,/STALE · LAST KNOWN/);
 });
 
-test('history, world catalog and sensorimotor relations remain explicitly unsupported', () => {
-  assert.match(renderScreen(ROUTES.find(route => route.path === '/timeline'), availableSource), /Historical timeline not supported/);
+test('receipt history is distinct from unsupported causal timeline and world joins', () => {
+  assert.match(renderScreen(ROUTES.find(route => route.path === '/timeline'), availableSource), /RECEIPT HISTORY · NOT CAUSAL/);
   assert.match(renderScreen(ROUTES.find(route => route.path === '/worlds'), availableSource), /World discovery, run enumeration/);
   assert.match(renderScreen(ROUTES.find(route => route.path === '/sensorimotor'), availableSource), /No relation contract is available/);
+});
+
+
+test('Claim Inspector filters only source-present families and reports bounded counts', () => {
+  const route = ROUTES.find(route => route.path === '/claims');
+  const source = {...availableSource, claims: [bodyPose, scalarField]};
+  const html = renderScreen(route, source, {claimFamily: 'embodiment.body_pose'});
+  assert.match(html, /Displaying 1 of 2 retained claims/);
+  assert.match(html, /Filter by source claim family/);
+  assert.match(html, /value="embodiment.body_pose" selected/);
+  assert.doesNotMatch(html, /<h2>environment\.finite_scalar_field<\/h2>/);
+  assert.match(html, /<h2>embodiment\.body_pose<\/h2>/);
 });
