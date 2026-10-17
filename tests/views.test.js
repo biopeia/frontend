@@ -60,9 +60,9 @@ function spatialClaim(family, value) {
   };
 }
 
-test('all seven peer routes render without inventing a World or run join', () => {
+test('all nine observatory routes render without inventing a World or run join', () => {
   const html = ROUTES.map(route => renderScreen(route, availableSource));
-  assert.equal(new Set(html).size, 7);
+  assert.equal(new Set(html).size, 9);
   for (const page of html) {
     assert.ok(!page.includes('runtime_tick_events'));
     assert.ok(!page.includes('Committed World revision: 12'));
