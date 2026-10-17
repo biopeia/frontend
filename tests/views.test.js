@@ -190,3 +190,13 @@ test('Claim Inspector filters only source-present families and reports bounded c
   assert.doesNotMatch(html, /<h2>environment\.finite_scalar_field<\/h2>/);
   assert.match(html, /<h2>embodiment\.body_pose<\/h2>/);
 });
+
+test('archive receipts route is canonical and does not masquerade as causal timeline', () => {
+  const archive = ROUTES.find(route => route.label === 'Archive Receipts');
+  assert.equal(archive.path, '/archive-receipts');
+  assert.equal(ROUTES.some(route => route.path === '/timeline'), false);
+  const html = renderScreen(archive, initialSource);
+  assert.match(html, /archive-history/);
+  assert.match(html, /NOT CAUSAL/);
+  assert.doesNotMatch(html, /Inspect committed World cuts/);
+});
