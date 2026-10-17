@@ -258,9 +258,9 @@ try {
       throw new Error(`Current-view ${name} failure did not retain the last valid snapshot with explicit stale status: ${failureNotice}`);
     }
     const failureAx = await send('Accessibility.getFullAXTree');
-    const statusExposed = failureAx.nodes.some(node => node.role?.value === 'status' &&
-      (node.name?.value || '').includes('LAST KNOWN · STALE'));
-    if (!statusExposed) throw new Error(`Current-view ${name} failure was not exposed through the accessible status live region`);
+    const statusNodes = failureAx.nodes.filter(node => node.role?.value === 'status');
+    const staleTextExposed = failureAx.nodes.some(node => (node.name?.value || '').includes('LAST KNOWN · STALE'));
+    if (!statusNodes.length || !staleTextExposed) throw new Error(`Current-view ${name} failure was not exposed through the accessible status live region: ${JSON.stringify({statusNodes: statusNodes.map(node => ({name: node.name?.value, value: node.value?.value})), staleTextNodes: failureAx.nodes.filter(node => (node.name?.value || '').includes('LAST KNOWN')).map(node => ({role: node.role?.value, name: node.name?.value}))})}`);
     currentViewFailureAcceptance[name] = true;
   };
   await assertCurrentViewFailure({name: 'malformed', responseCode: 200, body: '{', unavailableStatus: 'error'});
