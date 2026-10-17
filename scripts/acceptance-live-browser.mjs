@@ -257,10 +257,14 @@ try {
       form.elements.namedItem('owner').value=${JSON.stringify(filterState.owner)};
       form.elements.namedItem('family').value=${JSON.stringify(filterState.family)};
       form.elements.namedItem('revision').value=${JSON.stringify(filterState.revision)};
-      form.elements.namedItem('owner').focus();
+      form.requestSubmit();
     })()`);
-    await send('Input.dispatchKeyEvent', {type:'keyDown', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13});
-    await send('Input.dispatchKeyEvent', {type:'keyUp', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13});
+    let filteredReadIssued = false;
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (archiveReads().length > filterBefore) { filteredReadIssued = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (!filteredReadIssued) throw new Error('Applying archive filters did not issue a new bounded read request');
     const filteredReceipts = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('receipts in this page') && !result.includes('Reading bounded local archive receipts…') ? result : null; })()", 'filtered receipt page');
     const capturedArchiveReads = archiveReads();
     if (capturedArchiveReads.length <= filterBefore || capturedArchiveReads.some(request => request.method !== 'GET')) {
