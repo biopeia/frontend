@@ -67,6 +67,9 @@ try {
   const consoleErrors = [];
   let archiveReceiptResponseOverride = null;
   let archiveFailureIntercepted = false;
+  let currentViewResponseOverride = null;
+  let currentViewFailureIntercepted = false;
+  const currentViewFailureClickHeader = 'X-Frontend-Acceptance-Current-View-Click';
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
     if (message.method === 'Network.requestWillBeSent') requests.push({requestId: message.params.requestId, url: message.params.request.url, method: message.params.request.method});
@@ -77,7 +80,20 @@ try {
     if (message.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(message.params.type)) consoleErrors.push(message.params.args.map(arg => arg.value || arg.description || '').join(' '));
     if (message.method === 'Fetch.requestPaused') {
       const {requestId, request} = message.params;
-      if (archiveReceiptResponseOverride && request.url.startsWith(origin + '/api/observation/archive/receipts')) {
+      const isCurrentViewFailureClick = Object.entries(request.headers || {}).some(([name, value]) =>
+        name.toLowerCase() === currentViewFailureClickHeader.toLowerCase() && value === '1');
+      if (currentViewResponseOverride && isCurrentViewFailureClick && request.url === origin + '/api/observation/current') {
+        const {responseCode, body: responseBody, failReason} = currentViewResponseOverride;
+        currentViewResponseOverride = null;
+        currentViewFailureIntercepted = true;
+        if (failReason) {
+          void send('Fetch.failRequest', {requestId, errorReason: failReason});
+        } else {
+          const body = Buffer.from(responseBody).toString('base64');
+          void send('Fetch.fulfillRequest', {requestId, responseCode,
+            responseHeaders: [{name: 'Content-Type', value: 'application/json'}], body});
+        }
+      } else if (archiveReceiptResponseOverride && request.url.startsWith(origin + '/api/observation/archive/receipts')) {
         const {responseCode, body: responseBody, failReason} = archiveReceiptResponseOverride;
         archiveReceiptResponseOverride = null;
         archiveFailureIntercepted = true;
@@ -107,6 +123,35 @@ try {
     const result = await send('Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true});
     if (result.exceptionDetails) throw new Error(`Browser evaluation failed: ${result.exceptionDetails.text}`);
     return result.result.value;
+  };
+  const clickCurrentViewRefreshForFailure = async () => {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const clicked = await evaluate(`(() => {
+        const button = document.querySelector('#refresh');
+        if (!button || button.getAttribute('aria-busy') === 'true') return false;
+        if (!window.__frontendAcceptanceCurrentViewFetchOriginal) {
+          window.__frontendAcceptanceCurrentViewFetchOriginal = window.fetch;
+          window.fetch = function(input, init) {
+            const requestUrl = typeof input === 'string' ? input : input.url;
+            if (window.__frontendAcceptanceCurrentViewClick &&
+                new URL(requestUrl, window.location.href).pathname === '/api/observation/current') {
+              window.__frontendAcceptanceCurrentViewClick = false;
+              const headers = new Headers(input instanceof Request ? input.headers : undefined);
+              new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
+              headers.set(${JSON.stringify(currentViewFailureClickHeader)}, '1');
+              init = {...init, headers};
+            }
+            return window.__frontendAcceptanceCurrentViewFetchOriginal.call(this, input, init);
+          };
+        }
+        window.__frontendAcceptanceCurrentViewClick = true;
+        button.click();
+        return true;
+      })()`);
+      if (clicked) return;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error('Current-view refresh did not become idle for a deterministic failure injection');
   };
   await send('Page.enable');
   await send('Runtime.enable');
@@ -223,6 +268,83 @@ try {
     if (!initialAxLabels.includes(label)) throw new Error(`Browser accessibility tree omitted the accessible name ${JSON.stringify(label)}; observed ${JSON.stringify(initialAxLabels)}`);
   }
   await send('Emulation.clearDeviceMetricsOverride');
+  const currentViewFailureAcceptance = {};
+  const assertCurrentViewFailure = async ({name, responseCode, body, failReason, unavailableStatus}) => {
+    const retainedBefore = await evaluate("document.querySelectorAll('.claim-card').length");
+    if (!retainedBefore) throw new Error('Current-view failure test requires the validated real snapshot to remain rendered');
+    currentViewFailureIntercepted = false;
+    currentViewResponseOverride = {responseCode, body, failReason};
+    await send('Fetch.enable', {patterns: [{urlPattern: origin + '/api/observation/current', requestStage: 'Request'}]});
+    await clickCurrentViewRefreshForFailure();
+    let failureNotice = '';
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      failureNotice = await evaluate("document.querySelector('#observation-notice')?.innerText || ''");
+      const retainedNow = await evaluate("document.querySelectorAll('.claim-card').length");
+      if (currentViewFailureIntercepted && failureNotice.includes('retained in memory') &&
+          failureNotice.includes('later read failed (' + unavailableStatus + ')') && retainedNow === retainedBefore) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    if (!currentViewFailureIntercepted || !failureNotice.includes('retained in memory') ||
+        !failureNotice.includes('later read failed (' + unavailableStatus + ')') ||
+        await evaluate("document.querySelectorAll('.claim-card').length") !== retainedBefore) {
+      throw new Error(`Current-view ${name} failure did not retain the last valid snapshot with explicit stale status: ${failureNotice}`);
+    }
+    const noticeObject = await send('Runtime.evaluate', {
+      expression: "document.querySelector('#observation-notice')",
+      objectGroup: 'current-view-failure-notice',
+      returnByValue: false,
+    });
+    const noticeObjectId = noticeObject.result?.objectId;
+    if (!noticeObjectId) throw new Error('Current-view notice element is missing from the browser DOM');
+    let failureAx;
+    const noticeDescription = await send('DOM.describeNode', {objectId: noticeObjectId});
+    const noticeBackendNodeId = noticeDescription.node?.backendNodeId;
+    try {
+      failureAx = await send('Accessibility.getPartialAXTree', {objectId: noticeObjectId, fetchRelatives: true});
+    } finally {
+      await send('Runtime.releaseObjectGroup', {objectGroup: 'current-view-failure-notice'});
+    }
+    const noticeAxNode = failureAx.nodes.find(node => node.backendDOMNodeId === noticeBackendNodeId);
+    const nodesById = new Map(failureAx.nodes.map(node => [node.nodeId, node]));
+    const descendantIds = new Set();
+    const collectDescendants = node => {
+      for (const childId of node.childIds || []) {
+        if (descendantIds.has(childId)) continue;
+        descendantIds.add(childId);
+        const child = nodesById.get(childId);
+        if (child) collectDescendants(child);
+      }
+    };
+    if (noticeAxNode) collectDescendants(noticeAxNode);
+    const noticeAxText = [...descendantIds].map(id => nodesById.get(id))
+      .filter(Boolean).map(node => `${node.name?.value || ''} ${node.value?.value || ''}`).join(' ');
+    const staleTextExposed = /last validated Observation snapshot is retained in memory/i.test(noticeAxText) &&
+      noticeAxText.includes(`later read failed (${unavailableStatus})`);
+    if (noticeAxNode?.role?.value !== 'status' || !staleTextExposed) throw new Error(`Current-view ${name} notice was not exposed as a status live region containing its stale diagnostic: ${JSON.stringify({targetRole: noticeAxNode?.role?.value, noticeAxText, nodes: failureAx.nodes.map(node => ({id: node.nodeId, backendDOMNodeId: node.backendDOMNodeId, childIds: node.childIds, role: node.role?.value, name: node.name?.value, value: node.value?.value}))})}`);
+    currentViewFailureAcceptance[name] = true;
+  };
+  await assertCurrentViewFailure({name: 'malformed', responseCode: 200, body: '{', unavailableStatus: 'error'});
+  await assertCurrentViewFailure({name: 'denied', responseCode: 403, body: JSON.stringify({error: 'origin_denied'}), unavailableStatus: 'denied'});
+  await assertCurrentViewFailure({name: 'oversized', responseCode: 200,
+    body: JSON.stringify({payload: 'x'.repeat(1_000_010)}), unavailableStatus: 'error'});
+  await assertCurrentViewFailure({name: 'disconnected', failReason: 'ConnectionReset', unavailableStatus: 'disconnected'});
+  await assertCurrentViewFailure({name: 'unavailable', responseCode: 503, body: JSON.stringify({error: 'observation_unavailable'}), unavailableStatus: 'unavailable'});
+  await send('Fetch.disable');
+  await evaluate(`(() => {
+    if (window.__frontendAcceptanceCurrentViewFetchOriginal) {
+      window.fetch = window.__frontendAcceptanceCurrentViewFetchOriginal;
+      delete window.__frontendAcceptanceCurrentViewFetchOriginal;
+      delete window.__frontendAcceptanceCurrentViewClick;
+    }
+  })()`);
+  await evaluate("document.querySelector('#refresh')?.click()");
+  let currentViewRecovered = false;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const state = await evaluate("({status:document.querySelector('.connection-indicator')?.innerText || '', notice:document.querySelector('#observation-notice')?.innerText || ''})");
+    if (state.status.includes('Current view available') && state.notice.includes('BOUNDED CURRENT VIEW')) { currentViewRecovered = true; break; }
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  if (!currentViewRecovered) throw new Error('Current-view browser read did not recover after injected failure cases');
   let archiveResult = null;
   if (expectArchive) {
     const archiveReadyPath = process.env.ARCHIVE_ADAPTER_READY_PATH;
@@ -388,6 +510,7 @@ try {
     frontend_origin: origin, browser_attached_at_utc: pageAttachedAt, first_live_read_at_utc: connectedAt, distinct_rendered_ticks: ticks,
     snapshots, polls, approved_claim_families: allowedFamilies,
     read_requests: apiReads, non_same_origin_requests: foreign, read_only_gets: true,
+    current_view_failure_acceptance: currentViewFailureAcceptance, current_view_recovered: currentViewRecovered,
     archive_acceptance: archiveResult,
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));
 } finally {
