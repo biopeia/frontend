@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, readFile, rename, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -167,7 +167,10 @@ try {
     if (!pageAttachedAt && preWorld503) {
       pageAttachedAt = new Date().toISOString();
       if (process.env.BROWSER_READY_PATH) {
-        await writeFile(process.env.BROWSER_READY_PATH, JSON.stringify({browser_page_attached_at_utc: pageAttachedAt, pre_world_unavailable_read: true}), {flag: 'wx'});
+        const readyPath = process.env.BROWSER_READY_PATH;
+        const temporaryReadyPath = `${readyPath}.${process.pid}.tmp`;
+        await writeFile(temporaryReadyPath, JSON.stringify({browser_page_attached_at_utc: pageAttachedAt, pre_world_unavailable_read: true}), {flag: 'wx'});
+        await rename(temporaryReadyPath, readyPath);
       }
     }
     if (lastStatus.includes('Current view available')) { connectedAt = new Date().toISOString(); break; }
@@ -539,6 +542,7 @@ try {
     snapshots, polls, approved_claim_families: allowedFamilies,
     read_requests: apiReads, non_same_origin_requests: foreign, read_only_gets: true,
     current_view_failure_acceptance: currentViewFailureAcceptance, current_view_recovered: currentViewRecovered,
+    keyboard_navigation_acceptance: {skip_link_focus_and_activation: true, mobile_menu_space_toggle: true},
     archive_acceptance: archiveResult,
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));
 } finally {
