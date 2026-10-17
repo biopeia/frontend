@@ -119,11 +119,15 @@ async function readArchive(after = 0) {
   target.textContent = 'Reading bounded local archive receipts…';
   try {
     const response = await fetch('/api/observation/archive/receipts?limit=25&after=' + after, {cache:'no-store',credentials:'same-origin'});
-    if (!response.ok) throw new Error('Archive read unavailable (' + response.status + ')');
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({}));
+      const reason = typeof failure.status === 'string' ? failure.status : typeof failure.error === 'string' ? failure.error : 'archive_unavailable';
+      throw new Error('Archive read unavailable (' + response.status + ', ' + reason + ')');
+    }
     const payload = await response.json();
     if (payload.schema !== 'biopeia.observation.archive-http.v1' || !Array.isArray(payload.receipts) ||
         typeof payload.has_more !== 'boolean' || !Number.isSafeInteger(payload.next_after_receipt_sequence)) throw new Error('Unsupported archive response');
-    if (token !== archiveRequestToken || getRoute().path !== '/timeline') return;
+    if (token !== archiveRequestToken || !target.isConnected || getRoute().path !== '/archive-receipts') return;
     archivePage = payload;
     target.innerHTML = '<p class="fine">Local receipt order only; not World causal time or proof of complete history. No World/run join is inferred.</p>' +
       '<p role="status">' + escapeHtml(payload.status) + ' · ' + payload.receipts.length + ' receipts in this page</p>' +
@@ -135,7 +139,7 @@ async function readArchive(after = 0) {
         escapeHtml(r.content_sha256) + '</p></div></article>').join('') + '</div>' +
       (payload.has_more ? '<button type="button" id="archive-next">Next receipt page</button>' : '<p class="fine">No further receipts in this bounded query; this does not establish complete source history.</p>');
   } catch (error) {
-    if (token === archiveRequestToken && getRoute().path === '/timeline') {
+    if (token === archiveRequestToken && target.isConnected && getRoute().path === '/archive-receipts') {
       target.textContent = error.message + '. The current-view data remains independent.';
     }
   }
@@ -153,7 +157,7 @@ function renderRoute(source = observationStore.getState()) {
     }
   });
   renderObservationScreen(route, source, {replaceRoute: true});
-  if (route.path === '/timeline') void readArchive(0);
+  if (route.path === '/archive-receipts') void readArchive(0);
 }
 function renderObservationScreen(route, source, {replaceRoute = false} = {}) {
   const screen = document.querySelector('#observation-screen');
