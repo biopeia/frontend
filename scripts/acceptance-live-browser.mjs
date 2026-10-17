@@ -206,6 +206,20 @@ try {
   await send('Emulation.clearDeviceMetricsOverride');
   let archiveResult = null;
   if (expectArchive) {
+    const archiveReadyPath = process.env.ARCHIVE_ADAPTER_READY_PATH;
+    if (!archiveReadyPath) throw new Error('Archive acceptance requires the runner readiness marker');
+    let archiveReady = false;
+    for (let attempt = 0; attempt < 240; attempt += 1) {
+      try {
+        await readFile(archiveReadyPath, 'utf8');
+        archiveReady = true;
+        break;
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+    }
+    if (!archiveReady) throw new Error('Timed out waiting for the real World archive capture to close and become readable');
     const archiveReads = () => requests.filter(request => request.url.startsWith(origin + '/api/observation/archive/'));
     await evaluate("document.querySelector('a[href=\"/archive-receipts\"]')?.click()");
     const waitFor = async (predicate, label) => {
