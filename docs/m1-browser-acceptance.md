@@ -39,7 +39,7 @@ From the Frontend repository root, set the paths for the exact checkouts and run
 WORLD_REPO=/path/to/world \
 WORLD_SHA=5252ebc13f6d73fdb178d0ebc1c9c69735911298 \
 OBSERVATION_REPO=/path/to/observation-a0d3f615 \
-OBSERVATION_SHA=a0d3f61540ba9589edfdb5b3cdd6bf3935afd7d1 \
+OBSERVATION_SHA=14bfce4ef1b7b3ac39358606f42db18683fcfc9e \
 WORLD_PYTHON=/path/to/world/.venv/bin/python \
 CHROME_BIN=/usr/bin/google-chrome \
 npm run acceptance:m1
@@ -85,17 +85,17 @@ EMBODIMENT_REPO=/path/to/embodiment-clone \
 ENVIRONMENT_REPO=/path/to/environment-clone \
 MODALITY_REPO=/path/to/modality-clone \
 OBSERVATION_REPO=/path/to/observation-clone \
-OBSERVATION_SHA=a0d3f61540ba9589edfdb5b3cdd6bf3935afd7d1 \
+OBSERVATION_SHA=14bfce4ef1b7b3ac39358606f42db18683fcfc9e \
 CHROME_BIN=/usr/bin/google-chrome \
 npm run acceptance:m1:live
 ```
 
-The corresponding machine-readable stdout record is `M1_LIVE_ACCEPTANCE_RESULT=...`. It includes exact Frontend and World SHAs, the World process's actually verified Organism, Embodiment, Environment, Modality and Observation revisions, profile digest, each actual World commit/tick, ticks observed after browser attachment, browser version, same-origin read requests, screenshot SHA-256 and bounded limitations. The accepted World lock currently pins Observation `a0d3f61540ba9589edfdb5b3cdd6bf3935afd7d1`; do not substitute Observation `main` unless the World lock and executable are intentionally advanced and revalidated.
+The corresponding machine-readable stdout record is `M1_LIVE_ACCEPTANCE_RESULT=...`. It includes exact Frontend and World SHAs, the World process's actually verified Organism, Embodiment, Environment, Modality and Observation revisions, profile digest, each actual World commit/tick, ticks observed after browser attachment, browser version, same-origin read requests, screenshot SHA-256 and bounded limitations. The World lock revision supplied to each run is authoritative; do not substitute Observation `main` unless the World lock and executable are intentionally advanced and revalidated.
 
 This is a twenty-cycle local smoke acceptance only. It demonstrates no tolerance, safety or performance guarantee at 24 or more cycles; no history, remote/public service, scientific efficacy, restore/continuity, or atomic cross-owner snapshot.
 
 ### Optional live local-archive browser leg
 
-When a real Observation archive already contains captured owner publications and the Observation-owned loopback archive adapter is running, the same browser can additionally exercise the existing archive UI. Set `FRONTEND_ARCHIVE_ACCEPTANCE=1` and `OBSERVATION_ARCHIVE_URL=http://127.0.0.1:<port>` on the normal `npm run acceptance:m1:live` invocation. This leg requires a non-empty capture catalog and receipt page; it selects a capture, checks the bounded coverage copy, applies owner/family/revision filters, and exercises the next-page cursor when another page exists. It verifies that archive browser requests remain same-origin GETs.
+Set `FRONTEND_ARCHIVE_ACCEPTANCE=1` and `OBSERVATION_ARCHIVE_ADAPTER_SHA=<exact-40-character-Observation-commit>` on the normal `npm run acceptance:m1:live` invocation to enable the opt-in local archive leg. The `OBSERVATION_REPO` checkout must be at that exact adapter SHA with a clean `src/` tree; this adapter SHA is reported separately from the World lock-pinned Observation runtime SHA. In this mode the runner starts the same real World M1 process with its explicit `--archive-observations` option, waits for that capture to close, starts the Observation-owned loopback read adapter against the resulting SQLite archive, and then releases the already-open browser to read it. The browser requires a non-empty capture catalog and receipt page; it selects a capture, checks bounded coverage wording, applies owner/family/revision filters, exercises the next-page cursor when present, and verifies archive reads remain same-origin GETs. No archive entries are synthesized.
 
-The archive must be real operator-captured Observation data; this runner does not manufacture archive records or automatically enable capture. The World M1 process started by the live harness is not asserted to be the source of that existing archive. The paths are therefore not an atomic run association, and this optional leg does not establish causal replay, complete World history, archive contract approval, or V2 release acceptance. Omit the flag when no real non-empty archive is available; do not replace that requirement with a fixture.
+The archive is created by the real run, but this does not make receipt sequence causal time or assert a World-run join: the capture and browser expose separate identities and no such association is rendered. This candidate acceptance still does not establish causal replay, complete World history, exact archive wire-contract approval, independent review, or V2 release acceptance. The archive adapter starts only after capture has closed so the read path does not contend with its SQLite writer.

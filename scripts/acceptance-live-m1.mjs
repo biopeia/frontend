@@ -10,6 +10,9 @@ const required = [
 ];
 const missing = required.filter(name => !process.env[name]);
 if (missing.length) throw new Error(`Missing live acceptance inputs: ${missing.join(', ')}`);
+if (process.env.FRONTEND_ARCHIVE_ACCEPTANCE === '1' && !/^[a-f0-9]{40}$/.test(process.env.OBSERVATION_ARCHIVE_ADAPTER_SHA || '')) {
+  throw new Error('Archive acceptance requires OBSERVATION_ARCHIVE_ADAPTER_SHA for the separately pinned read adapter');
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {stdio: 'inherit', ...options});
@@ -40,7 +43,7 @@ for (const name of ['ORGANISM_REPO', 'EMBODIMENT_REPO', 'ENVIRONMENT_REPO', 'MOD
 }
 
 console.log(JSON.stringify({event: 'acceptance-inputs', frontend_sha: frontendSha, world_sha: process.env.WORLD_SHA,
-  observation_pinned_sha: pinnedObservation, world_m1_bin: process.env.WORLD_M1_BIN,
+  observation_pinned_sha: pinnedObservation, observation_archive_adapter_sha: process.env.OBSERVATION_ARCHIVE_ADAPTER_SHA || null, world_m1_bin: process.env.WORLD_M1_BIN,
   world_profile: process.env.WORLD_PROFILE, cycles: 20}));
 run('node', ['scripts/build.js'], {cwd: root});
 run(process.env.WORLD_PYTHON || 'python3', ['scripts/m1-live-session-acceptance.py'], {

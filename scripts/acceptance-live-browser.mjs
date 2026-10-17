@@ -206,6 +206,20 @@ try {
   await send('Emulation.clearDeviceMetricsOverride');
   let archiveResult = null;
   if (expectArchive) {
+    const archiveReadyPath = process.env.ARCHIVE_ADAPTER_READY_PATH;
+    if (!archiveReadyPath) throw new Error('Archive acceptance requires the runner readiness marker');
+    let archiveReady = false;
+    for (let attempt = 0; attempt < 240; attempt += 1) {
+      try {
+        await readFile(archiveReadyPath, 'utf8');
+        archiveReady = true;
+        break;
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+    }
+    if (!archiveReady) throw new Error('Timed out waiting for the real World archive capture to close and become readable');
     const archiveReads = () => requests.filter(request => request.url.startsWith(origin + '/api/observation/archive/'));
     await evaluate("document.querySelector('a[href=\"/archive-receipts\"]')?.click()");
     const waitFor = async (predicate, label) => {
@@ -225,10 +239,24 @@ try {
     const captureButtons = await evaluate("[...document.querySelectorAll('[data-archive-coverage]')].map(button=>button.getAttribute('data-archive-coverage'))");
     const receiptCards = await evaluate("[...document.querySelectorAll('#archive-results .panel')].map(card=>card.innerText)");
     if (!captureButtons.length || !receiptCards.length) throw new Error('Archive browser acceptance requires a real non-empty capture catalog and receipt page');
+    let receiptNextPageExercised = false;
+    if (await evaluate("Boolean(document.querySelector('#archive-next'))")) {
+      const beforePage = archiveReads().length;
+      await evaluate("document.querySelector('#archive-next').click()");
+      await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('receipts in this page') && !result.includes('Reading bounded local archive receipts…'); })()", 'next bounded receipt page');
+      const nextRequest = archiveReads().slice(beforePage).find(request => request.url.includes('/receipts?'));
+      if (!nextRequest || new URL(nextRequest.url).searchParams.get('after') === '0' ||
+          new URL(nextRequest.url).searchParams.get('limit') !== '25') {
+        throw new Error('Archive next-page control did not advance the bounded receipt cursor');
+      }
+      receiptNextPageExercised = true;
+    }
     await evaluate("document.querySelector('[data-archive-coverage]')?.click()");
     const coverage = await waitFor("(() => { const value=document.querySelector('#archive-coverage')?.innerText||''; return value.includes('Closure verified:') ? value : null; })()", 'selected capture coverage');
     if (!coverage.includes('not all World history') || /world_run_id|causal tick/i.test(coverage)) throw new Error(`Archive coverage presentation exceeded its bounded claim: ${coverage}`);
     const filterBefore = archiveReads().length;
+    const metadataReadsBeforeFilter = archiveReads().filter(request => request.url.endsWith('/captures')).length;
+    const coverageBeforeFilter = await evaluate("document.querySelector('#archive-coverage')?.innerText || ''");
     const filterState = await evaluate(`(() => {
       const card=document.querySelector('#archive-results .panel');
       const text=card?.innerText||'';
@@ -243,11 +271,20 @@ try {
       form.elements.namedItem('owner').value=${JSON.stringify(filterState.owner)};
       form.elements.namedItem('family').value=${JSON.stringify(filterState.family)};
       form.elements.namedItem('revision').value=${JSON.stringify(filterState.revision)};
-      form.elements.namedItem('owner').focus();
+      form.requestSubmit();
     })()`);
-    await send('Input.dispatchKeyEvent', {type:'keyDown', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13});
-    await send('Input.dispatchKeyEvent', {type:'keyUp', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13});
+    let filteredReadIssued = false;
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (archiveReads().length > filterBefore) { filteredReadIssued = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (!filteredReadIssued) throw new Error('Applying archive filters did not issue a new bounded read request');
     const filteredReceipts = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('receipts in this page') && !result.includes('Reading bounded local archive receipts…') ? result : null; })()", 'filtered receipt page');
+    const coverageAfterFilter = await evaluate("document.querySelector('#archive-coverage')?.innerText || ''");
+    const metadataReadsAfterFilter = archiveReads().filter(request => request.url.endsWith('/captures')).length;
+    if (!coverageBeforeFilter || coverageAfterFilter !== coverageBeforeFilter || metadataReadsAfterFilter !== metadataReadsBeforeFilter) {
+      throw new Error('Changing archive receipt filters did not preserve the selected capture coverage without reloading the catalog');
+    }
     const capturedArchiveReads = archiveReads();
     if (capturedArchiveReads.length <= filterBefore || capturedArchiveReads.some(request => request.method !== 'GET')) {
       throw new Error(`Archive UI did not issue a bounded same-origin read-only filter request: ${JSON.stringify(capturedArchiveReads)}`);
@@ -258,22 +295,24 @@ try {
         filteredUrl.searchParams.get('revision') !== filterState.revision || filteredUrl.searchParams.get('limit') !== '25') {
       throw new Error(`Archive filters or page bound were not forwarded exactly: ${filteredRequest.url}`);
     }
-    const beforeNextPage = capturedArchiveReads.length;
     const hasNextPage = await evaluate("Boolean(document.querySelector('#archive-next'))");
     if (hasNextPage) {
+      const beforeNextPage = capturedArchiveReads.length;
       await evaluate("document.querySelector('#archive-next').click()");
       await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('receipts in this page') && !result.includes('Reading bounded local archive receipts…'); })()", 'next bounded receipt page');
       const nextRequest = archiveReads().slice(beforeNextPage).find(request => request.url.includes('/receipts?'));
       if (!nextRequest || new URL(nextRequest.url).searchParams.get('after') === '0') {
         throw new Error('Archive next-page control did not advance the receipt cursor');
       }
+      receiptNextPageExercised = true;
     }
     const archiveForeign = requests.filter(request => new URL(request.url).origin !== origin);
     if (archiveForeign.length) throw new Error(`Archive browser contacted a non-same-origin URL: ${JSON.stringify(archiveForeign)}`);
     archiveResult = {capture_count: captureButtons.length, initial_receipt_count: receiptCards.length,
       coverage_inspected: true, filtered_results_rendered: true, keyboard_filter_submission: true,
       accessible_filter_names: ['Owner', 'Family', 'Revision', 'Apply filters'], same_origin_gets: capturedArchiveReads,
-      bounded_coverage_copy: coverage.includes('not all World history'), filtered_status: filteredReceipts.match(/[^\n]*/)?.[0]};
+      bounded_coverage_copy: coverage.includes('not all World history'), receipt_next_page_exercised: receiptNextPageExercised,
+      filtered_status: filteredReceipts.match(/[^\n]*/)?.[0]};
   }
   if (consoleErrors.length) throw new Error(`Browser reported errors or warnings: ${JSON.stringify(consoleErrors)}`);
   const screenshot = await send('Page.captureScreenshot', {format: 'png', captureBeyondViewport: false});
