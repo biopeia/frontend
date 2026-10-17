@@ -196,7 +196,7 @@ export function createFrontendServer({root = 'dist', bridgeUrl = process.env.OBS
         'Content-Length': body.length,
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
-        'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' https://raw.githubusercontent.com; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+        'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
       });
       res.end(req.method === 'HEAD' ? undefined : body);
     } catch { sendJson(res, 404, 'not_found'); }
