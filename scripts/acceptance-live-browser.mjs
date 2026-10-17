@@ -8,10 +8,15 @@ import {createFrontendServer} from './frontend-server.js';
 
 const root = resolve(process.env.FRONTEND_ROOT || '.');
 const bridgeUrl = process.env.FRONTEND_BRIDGE_URL;
+const archiveUrl = process.env.OBSERVATION_ARCHIVE_URL;
+const expectArchive = process.env.FRONTEND_ARCHIVE_ACCEPTANCE === '1';
 const origin = process.env.FRONTEND_ORIGIN || 'http://127.0.0.1:4173';
 const chromeBin = process.env.CHROME_BIN || '/usr/bin/google-chrome';
 if (!bridgeUrl?.startsWith('http://127.0.0.1:') || !bridgeUrl.endsWith('/v1/current')) {
   throw new Error('A live loopback Observation current-view bridge is required');
+}
+if (expectArchive && (!archiveUrl || !/^http:\/\/127\.0\.0\.1:\d+$/.test(archiveUrl))) {
+  throw new Error('Archive browser acceptance requires an explicit loopback Observation archive adapter URL');
 }
 const originUrl = new URL(origin);
 if (originUrl.protocol !== 'http:' || originUrl.hostname !== '127.0.0.1' || !originUrl.port) {
@@ -19,7 +24,7 @@ if (originUrl.protocol !== 'http:' || originUrl.hostname !== '127.0.0.1' || !ori
 }
 
 const profile = await mkdtemp(join(tmpdir(), 'biopeia-m1-live-chrome-'));
-const frontend = createFrontendServer({root: resolve(root, 'dist'), bridgeUrl});
+const frontend = createFrontendServer({root: resolve(root, 'dist'), bridgeUrl, ...(archiveUrl ? {archiveUrl} : {})});
 frontend.listen(Number(originUrl.port), '127.0.0.1');
 await once(frontend, 'listening');
 let browser;
@@ -86,6 +91,7 @@ try {
   };
   await send('Page.enable');
   await send('Runtime.enable');
+  await send('Accessibility.enable');
   await send('Network.enable');
   await send('Page.navigate', {url: origin + '/overview'});
   let connectedAt;
@@ -191,6 +197,84 @@ try {
   const foreign = requests.filter(request => new URL(request.url).origin !== origin);
   if (apiReads.length < 2 || apiReads.some(request => request.method !== 'GET')) throw new Error(`Expected repeated read-only same-origin GETs, got ${JSON.stringify(apiReads)}`);
   if (foreign.length) throw new Error(`Browser contacted a non-same-origin URL: ${JSON.stringify(foreign)}`);
+  await send('Emulation.setDeviceMetricsOverride', {width:375, height:812, deviceScaleFactor:1, mobile:true});
+  const initialAx = await send('Accessibility.getFullAXTree');
+  const initialAxLabels = initialAx.nodes.map(node => node.name?.value).filter(Boolean);
+  for (const label of ['Skip to main content', 'Toggle navigation', 'Refresh current Observation snapshot']) {
+    if (!initialAxLabels.includes(label)) throw new Error(`Browser accessibility tree omitted the accessible name ${JSON.stringify(label)}; observed ${JSON.stringify(initialAxLabels)}`);
+  }
+  await send('Emulation.clearDeviceMetricsOverride');
+  let archiveResult = null;
+  if (expectArchive) {
+    const archiveReads = () => requests.filter(request => request.url.startsWith(origin + '/api/observation/archive/'));
+    await evaluate("document.querySelector('a[href=\"/archive-receipts\"]')?.click()");
+    const waitFor = async (predicate, label) => {
+      for (let i = 0; i < 200; i += 1) {
+        const value = await evaluate(predicate);
+        if (value) return value;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      throw new Error(`Archive browser acceptance timed out waiting for ${label}`);
+    };
+    const initialArchive = await waitFor("(() => { const m=document.querySelector('#archive-metadata')?.innerText||''; const r=document.querySelector('#archive-results')?.innerText||''; return m.includes('captures') && !m.includes('Reading local capture catalog') && !r.includes('Reading bounded local archive receipts…') ? {metadata:m, receipts:r} : null; })()", 'capture catalog and receipt page');
+    const archiveAx = await send('Accessibility.getFullAXTree');
+    const archiveAxLabels = archiveAx.nodes.map(node => node.name?.value).filter(Boolean);
+    for (const label of ['Owner', 'Family', 'Revision', 'Apply filters']) {
+      if (!archiveAxLabels.includes(label)) throw new Error(`Archive browser accessibility tree omitted ${JSON.stringify(label)}`);
+    }
+    const captureButtons = await evaluate("[...document.querySelectorAll('[data-archive-coverage]')].map(button=>button.getAttribute('data-archive-coverage'))");
+    const receiptCards = await evaluate("[...document.querySelectorAll('#archive-results .panel')].map(card=>card.innerText)");
+    if (!captureButtons.length || !receiptCards.length) throw new Error('Archive browser acceptance requires a real non-empty capture catalog and receipt page');
+    await evaluate("document.querySelector('[data-archive-coverage]')?.click()");
+    const coverage = await waitFor("(() => { const value=document.querySelector('#archive-coverage')?.innerText||''; return value.includes('Closure verified:') ? value : null; })()", 'selected capture coverage');
+    if (!coverage.includes('not all World history') || /world_run_id|causal tick/i.test(coverage)) throw new Error(`Archive coverage presentation exceeded its bounded claim: ${coverage}`);
+    const filterBefore = archiveReads().length;
+    const filterState = await evaluate(`(() => {
+      const card=document.querySelector('#archive-results .panel');
+      const text=card?.innerText||'';
+      const family=card?.querySelector('strong')?.innerText||'';
+      const owner=text.match(/Authority:\\s*([^\\s]+)/)?.[1]||'';
+      const revision=text.match(/Revision:\\s*([^\\s]+)/)?.[1]||'';
+      return {owner,family,revision};
+    })()`);
+    if (!filterState.owner || !filterState.family || !filterState.revision) throw new Error('Archive receipt card omitted supported filter fields');
+    await evaluate(`(() => {
+      const form=document.querySelector('#archive-filter-form');
+      form.elements.namedItem('owner').value=${JSON.stringify(filterState.owner)};
+      form.elements.namedItem('family').value=${JSON.stringify(filterState.family)};
+      form.elements.namedItem('revision').value=${JSON.stringify(filterState.revision)};
+      form.elements.namedItem('owner').focus();
+    })()`);
+    await send('Input.dispatchKeyEvent', {type:'keyDown', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13});
+    await send('Input.dispatchKeyEvent', {type:'keyUp', key:'Enter', code:'Enter', windowsVirtualKeyCode:13, nativeVirtualKeyCode:13});
+    const filteredReceipts = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('receipts in this page') && !result.includes('Reading bounded local archive receipts…') ? result : null; })()", 'filtered receipt page');
+    const capturedArchiveReads = archiveReads();
+    if (capturedArchiveReads.length <= filterBefore || capturedArchiveReads.some(request => request.method !== 'GET')) {
+      throw new Error(`Archive UI did not issue a bounded same-origin read-only filter request: ${JSON.stringify(capturedArchiveReads)}`);
+    }
+    const filteredRequest = capturedArchiveReads.at(-1);
+    const filteredUrl = new URL(filteredRequest.url);
+    if (filteredUrl.searchParams.get('owner') !== filterState.owner || filteredUrl.searchParams.get('family') !== filterState.family ||
+        filteredUrl.searchParams.get('revision') !== filterState.revision || filteredUrl.searchParams.get('limit') !== '25') {
+      throw new Error(`Archive filters or page bound were not forwarded exactly: ${filteredRequest.url}`);
+    }
+    const beforeNextPage = capturedArchiveReads.length;
+    const hasNextPage = await evaluate("Boolean(document.querySelector('#archive-next'))");
+    if (hasNextPage) {
+      await evaluate("document.querySelector('#archive-next').click()");
+      await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('receipts in this page') && !result.includes('Reading bounded local archive receipts…'); })()", 'next bounded receipt page');
+      const nextRequest = archiveReads().slice(beforeNextPage).find(request => request.url.includes('/receipts?'));
+      if (!nextRequest || new URL(nextRequest.url).searchParams.get('after') === '0') {
+        throw new Error('Archive next-page control did not advance the receipt cursor');
+      }
+    }
+    const archiveForeign = requests.filter(request => new URL(request.url).origin !== origin);
+    if (archiveForeign.length) throw new Error(`Archive browser contacted a non-same-origin URL: ${JSON.stringify(archiveForeign)}`);
+    archiveResult = {capture_count: captureButtons.length, initial_receipt_count: receiptCards.length,
+      coverage_inspected: true, filtered_results_rendered: true, keyboard_filter_submission: true,
+      accessible_filter_names: ['Owner', 'Family', 'Revision', 'Apply filters'], same_origin_gets: capturedArchiveReads,
+      bounded_coverage_copy: coverage.includes('not all World history'), filtered_status: filteredReceipts.match(/[^\n]*/)?.[0]};
+  }
   if (consoleErrors.length) throw new Error(`Browser reported errors or warnings: ${JSON.stringify(consoleErrors)}`);
   const screenshot = await send('Page.captureScreenshot', {format: 'png', captureBeyondViewport: false});
   const screenshotBytes = Buffer.from(screenshot.data, 'base64');
@@ -201,6 +285,7 @@ try {
     frontend_origin: origin, browser_attached_at_utc: pageAttachedAt, first_live_read_at_utc: connectedAt, distinct_rendered_ticks: ticks,
     snapshots, polls, approved_claim_families: allowedFamilies,
     read_requests: apiReads, non_same_origin_requests: foreign, read_only_gets: true,
+    archive_acceptance: archiveResult,
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));
 } finally {
   socket?.close();
