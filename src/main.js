@@ -109,6 +109,38 @@ function patchHtml(current, html) {
   template.innerHTML = html;
   patchChildren(current, template.content);
 }
+
+let archivePage = null;
+let archiveRequestToken = 0;
+async function readArchive(after = 0) {
+  const token = ++archiveRequestToken;
+  const target = document.querySelector('#archive-history');
+  if (!target) return;
+  target.textContent = 'Reading bounded local archive receipts…';
+  try {
+    const response = await fetch('/api/observation/archive/receipts?limit=25&after=' + after, {cache:'no-store',credentials:'same-origin'});
+    if (!response.ok) throw new Error('Archive read unavailable (' + response.status + ')');
+    const payload = await response.json();
+    if (payload.schema !== 'biopeia.observation.archive-http.v1' || !Array.isArray(payload.receipts) ||
+        typeof payload.has_more !== 'boolean' || !Number.isSafeInteger(payload.next_after_receipt_sequence)) throw new Error('Unsupported archive response');
+    if (token !== archiveRequestToken || getRoute().path !== '/timeline') return;
+    archivePage = payload;
+    target.innerHTML = '<p class="fine">Local receipt order only; not World causal time or proof of complete history. No World/run join is inferred.</p>' +
+      '<p role="status">' + escapeHtml(payload.status) + ' · ' + payload.receipts.length + ' receipts in this page</p>' +
+      '<div class="claim-grid">' + payload.receipts.map(r => '<article class="panel"><div class="panel-body">' +
+        '<strong>' + escapeHtml(r.family) + '</strong><p>Authority: ' + escapeHtml(r.authority) +
+        ' · Revision: ' + escapeHtml(r.revision) + '</p><p>Local receipt: ' + escapeHtml(r.receipt_sequence) +
+        ' · Capture: ' + escapeHtml(r.capture_id ?? 'not asserted') + ' · Source delivery: ' +
+        escapeHtml(r.source_sequence ?? 'not asserted') + '</p><p class="fine">Digest: ' +
+        escapeHtml(r.content_sha256) + '</p></div></article>').join('') + '</div>' +
+      (payload.has_more ? '<button type="button" id="archive-next">Next receipt page</button>' : '<p class="fine">No further receipts in this bounded query; this does not establish complete source history.</p>');
+  } catch (error) {
+    if (token === archiveRequestToken && getRoute().path === '/timeline') {
+      target.textContent = error.message + '. The current-view data remains independent.';
+    }
+  }
+}
+
 function renderRoute(source = observationStore.getState()) {
   const route = getRoute();
   document.title = `${route.label} · Biopeia`;
@@ -121,6 +153,7 @@ function renderRoute(source = observationStore.getState()) {
     }
   });
   renderObservationScreen(route, source, {replaceRoute: true});
+  if (route.path === '/timeline') void readArchive(0);
 }
 function renderObservationScreen(route, source, {replaceRoute = false} = {}) {
   const screen = document.querySelector('#observation-screen');
@@ -232,6 +265,10 @@ function mount() {
       document.querySelector('#menu').setAttribute('aria-expanded','false');
       renderRoute();
       document.getElementById('content').focus();
+      return;
+    }
+    if (event.target.closest('#archive-next')) {
+      if (archivePage?.has_more) void readArchive(archivePage.next_after_receipt_sequence);
       return;
     }
     if (event.target.closest('#theme')) {
