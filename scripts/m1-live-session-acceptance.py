@@ -57,11 +57,23 @@ if not bridge_bin.is_file():
 with (world / "pyproject.toml").open("rb") as handle:
     project = tomllib.load(handle)["project"]
 runtime_requirements = project["optional-dependencies"]["runtime"]
+with (world / "uv.lock").open("rb") as handle:
+    lock = tomllib.load(handle)
+locked_sources = {
+    package["name"]: package["source"]["git"]
+    for package in lock["package"]
+    if package.get("source", {}).get("git")
+}
 pins: dict[str, str] = {}
 source_checkout_heads: dict[str, str] = {}
 for requirement in runtime_requirements:
     name, uri = requirement.split(" @ ", 1)
-    pins[name] = uri.rsplit("@", 1)[1]
+    locked_uri = locked_sources.get(name, "")
+    locked_revision = locked_uri.rsplit("#", 1)[-1]
+    declared_repo = uri.split("@", 1)[0].removeprefix("git+")
+    if not locked_uri.startswith(declared_repo + "?") or len(locked_revision) != 40:
+        raise RuntimeError(f"World lock does not resolve the declared {name} source to a commit: {locked_uri!r}")
+    pins[name] = locked_revision
     repo_key = {"organism": "ORGANISM_REPO", "embodiment": "EMBODIMENT_REPO", "environment": "ENVIRONMENT_REPO", "modality": "MODALITY_REPO", "observation": "OBSERVATION_REPO"}[name]
     repo_path = Path(required(repo_key)).resolve()
     source_checkout_heads[name] = git(repo_path, "rev-parse", "HEAD")

@@ -111,6 +111,34 @@ try {
   if (!connectedAt) throw new Error(`Browser did not connect to the live current-view bridge; last UI status=${JSON.stringify(lastStatus)}`);
   const snapshots = [];
   const polls = [];
+  const allowedFamilies = ['environment.render_scene', 'embodiment.render_morphology',
+    'embodiment.body_pose', 'environment.finite_scalar_field'];
+  const captureObservation = view => {
+    const unexpected = view.families.filter(family => !allowedFamilies.includes(family));
+    const missing = allowedFamilies.filter(family => !view.families.includes(family));
+    if (unexpected.length || missing.length) {
+      throw new Error(`Unexpected current-view claim families: ${JSON.stringify({unexpected, missing, families: view.families})}`);
+    }
+    const bodyCard = view.cards[view.families.indexOf('embodiment.body_pose')];
+    const environmentCard = view.cards[view.families.indexOf('environment.finite_scalar_field')];
+    const bodyTick = Number(bodyCard.match(/world\.world_causal_tick = (\d+)/)?.[1]);
+    const bodyLineage = bodyCard.match(/embodiment_state_sha256: ([a-f0-9]{64})/)?.[1] || null;
+    const environmentLineage = environmentCard.match(/owner_checkpoint_sha256: ([a-f0-9]{64})/)?.[1] || null;
+    if (!Number.isSafeInteger(bodyTick) || !bodyLineage || !environmentLineage) {
+      throw new Error('Rendered World tick or owner source-lineage digests were missing');
+    }
+    const observedAt = new Date().toISOString();
+    const key = `${bodyTick}:${bodyLineage}:${environmentLineage}`;
+    if (!snapshots.some(snapshot => snapshot.key === key)) snapshots.push({key, tick: bodyTick,
+      observed_at_utc: observedAt, families: view.families, body_state_sha256: bodyLineage,
+      environment_checkpoint_sha256: environmentLineage});
+    const previous = [...polls].reverse().find(item => item.tick === bodyTick);
+    if (previous && (previous.body_state_sha256 !== bodyLineage || previous.environment_checkpoint_sha256 !== environmentLineage)) {
+      throw new Error(`A repeated read at World tick ${bodyTick} changed source lineage`);
+    }
+    polls.push({tick: bodyTick, observed_at_utc: observedAt, body_state_sha256: bodyLineage,
+      environment_checkpoint_sha256: environmentLineage});
+  };
   let lastView;
   // Keep the automatically completed first read; the World session may be short-lived.
   lastView = await evaluate(`(() => {
@@ -119,20 +147,7 @@ try {
       families: cards.map(card => card.querySelector('h2')?.innerText || ''),
       cards: cards.map(card => card.innerText), bodyText: document.body.innerText};
   })()`);
-  if (lastView.status.includes('Current view available') && lastView.families.length === 2) {
-    const bodyCard = lastView.cards[0];
-    const bodyTick = Number(bodyCard.match(/world\.world_causal_tick = (\d+)/)?.[1]);
-    const bodyLineage = bodyCard.match(/embodiment_state_sha256: ([a-f0-9]{64})/)?.[1] || null;
-    const environmentLineage = lastView.cards[1].match(/owner_checkpoint_sha256: ([a-f0-9]{64})/)?.[1] || null;
-    if (Number.isSafeInteger(bodyTick)) {
-      const observedAt = new Date().toISOString();
-      snapshots.push({key: `${bodyTick}:${bodyLineage || ''}:${environmentLineage || ''}`, tick: bodyTick,
-        observed_at_utc: observedAt, families: lastView.families, body_state_sha256: bodyLineage,
-        environment_checkpoint_sha256: environmentLineage});
-      polls.push({tick: bodyTick, observed_at_utc: observedAt, body_state_sha256: bodyLineage,
-        environment_checkpoint_sha256: environmentLineage});
-    }
-  }
+  if (lastView.status.includes('Current view available')) captureObservation(lastView);
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const beforeReads = requests.filter(request => request.url === origin + '/api/observation/current').length;
@@ -162,26 +177,9 @@ try {
         cards: cards.map(card => card.innerText), bodyText: document.body.innerText};
     })()`);
     lastView = view;
-    if (view.status.includes('Current view available') && view.families.length === 2) {
-      const allowed = ['embodiment.body_pose', 'environment.finite_scalar_field'];
-      if (JSON.stringify(view.families) !== JSON.stringify(allowed)) throw new Error(`Unexpected claim families: ${JSON.stringify(view.families)}`);
+    if (view.status.includes('Current view available')) {
       if (!view.bodyText.includes('not joined') && !view.bodyText.includes('not a shared snapshot')) throw new Error('Cross-owner limitation copy was absent');
-      const bodyCard = view.cards[0];
-      const bodyTick = Number(bodyCard.match(/world\.world_causal_tick = (\d+)/)?.[1]);
-      const environmentCard = view.cards[1];
-      const bodyLineage = bodyCard.match(/embodiment_state_sha256: ([a-f0-9]{64})/)?.[1] || null;
-      const environmentLineage = environmentCard.match(/owner_checkpoint_sha256: ([a-f0-9]{64})/)?.[1] || null;
-      if (Number.isSafeInteger(bodyTick)) {
-        const poll = {tick: bodyTick, observed_at_utc: new Date().toISOString(),
-          body_state_sha256: bodyLineage, environment_checkpoint_sha256: environmentLineage};
-        const previous = [...polls].reverse().find(item => item.tick === bodyTick);
-        if (previous && (previous.body_state_sha256 !== bodyLineage || previous.environment_checkpoint_sha256 !== environmentLineage)) {
-          throw new Error(`A repeated read at World tick ${bodyTick} changed source lineage`);
-        }
-        polls.push(poll);
-        const key = `${bodyTick}:${bodyLineage || ''}:${environmentLineage || ''}`;
-        if (!snapshots.some(snapshot => snapshot.key === key)) snapshots.push({key, tick: bodyTick, observed_at_utc: new Date().toISOString(), families: view.families, body_state_sha256: bodyLineage, environment_checkpoint_sha256: environmentLineage});
-      }
+      captureObservation(view);
       if (new Set(snapshots.map(snapshot => snapshot.tick)).size >= 2) break;
     }
     await new Promise(resolve => setTimeout(resolve, 25));
@@ -201,7 +199,7 @@ try {
   await writeFile(join(profile, 'm1-live-browser.png'), screenshotBytes);
   console.log('M1_LIVE_BROWSER_RESULT=' + JSON.stringify({status: 'PASS', browser_version: version.Browser,
     frontend_origin: origin, browser_attached_at_utc: pageAttachedAt, first_live_read_at_utc: connectedAt, distinct_rendered_ticks: ticks,
-    snapshots, polls, approved_claim_families: ['embodiment.body_pose', 'environment.finite_scalar_field'],
+    snapshots, polls, approved_claim_families: allowedFamilies,
     read_requests: apiReads, non_same_origin_requests: foreign, read_only_gets: true,
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));
 } finally {
