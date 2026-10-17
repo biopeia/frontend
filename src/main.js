@@ -315,6 +315,8 @@ function mount() {
   app.addEventListener('change', event => {
     if (event.target?.id !== 'claim-family-filter') return;
     selectedClaimFamily = event.target.value;
+    const route = getRoute();
+    if (route.path === '/archive-receipts') return;
     renderRoute();
   });
   app.addEventListener('click', event => {
