@@ -1,3 +1,4 @@
+import {archiveIntervals} from './archive-intervals.js';
 import {fetchCurrentObservation, ObservationReadError} from './observation-client.js';
 import {createSnapshotRefresh} from './snapshot-refresh.js';
 import {createObservationStore} from './observation-store.js';
@@ -110,17 +111,6 @@ function patchHtml(current, html) {
   patchChildren(current, template.content);
 }
 
-function archiveIntervals(value, withReason = false) {
-  if (!Array.isArray(value)) return 'not asserted';
-  if (value.length === 0) return 'none recorded';
-  if (!value.every(entry => Array.isArray(entry) && entry.length === (withReason ? 3 : 2) &&
-    Number.isSafeInteger(entry[0]) && entry[0] >= 0 &&
-    (entry[1] === null && !withReason || Number.isSafeInteger(entry[1]) && entry[1] >= entry[0]) &&
-    (!withReason || typeof entry[2] === 'string'))) return 'invalid interval data';
-  return value.map(entry => escapeHtml(entry[0]) + '–' +
-    (entry[1] === null ? 'open, unverified to present' : escapeHtml(entry[1])) +
-    (withReason ? ' (reason: ' + escapeHtml(entry[2]) + ')' : '')).join('; ');
-}
 async function archiveReadFailure(response, label) {
   const failure = await response.json().catch(() => ({}));
   const reason = typeof failure.status === 'string' ? failure.status :
