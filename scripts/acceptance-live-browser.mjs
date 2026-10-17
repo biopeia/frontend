@@ -197,11 +197,13 @@ try {
   const foreign = requests.filter(request => new URL(request.url).origin !== origin);
   if (apiReads.length < 2 || apiReads.some(request => request.method !== 'GET')) throw new Error(`Expected repeated read-only same-origin GETs, got ${JSON.stringify(apiReads)}`);
   if (foreign.length) throw new Error(`Browser contacted a non-same-origin URL: ${JSON.stringify(foreign)}`);
+  await send('Emulation.setDeviceMetricsOverride', {width:375, height:812, deviceScaleFactor:1, mobile:true});
   const initialAx = await send('Accessibility.getFullAXTree');
   const initialAxLabels = initialAx.nodes.map(node => node.name?.value).filter(Boolean);
   for (const label of ['Skip to main content', 'Toggle navigation', 'Refresh current Observation snapshot']) {
     if (!initialAxLabels.includes(label)) throw new Error(`Browser accessibility tree omitted the accessible name ${JSON.stringify(label)}; observed ${JSON.stringify(initialAxLabels)}`);
   }
+  await send('Emulation.clearDeviceMetricsOverride');
   let archiveResult = null;
   if (expectArchive) {
     const archiveReads = () => requests.filter(request => request.url.startsWith(origin + '/api/observation/archive/'));
