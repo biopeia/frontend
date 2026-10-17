@@ -80,15 +80,19 @@ function claimCard(claim) {
   </div></article>`;
 }
 
-function claimsSection(source, {title = 'Independent owner publications', emptyTitle = 'No approved claims retained'} = {}) {
+function claimsSection(source, {title = 'Independent owner publications', emptyTitle = 'No approved claims retained', selectedFamily = ''} = {}) {
   if (!source.claims.length) {
     const copy = source.status === 'empty' ? 'The approved bounded current subset contains no retained messages.' :
       source.status === 'unsupported' ? 'The response contained no claim family supported by this Frontend slice.' :
       'No validated current Observation messages are available in this read.';
     return panel(title, note(emptyTitle, copy, source.status.toUpperCase()), source.status.toUpperCase());
   }
+  const families = [...new Set(source.claims.map(claim => claim.family))].sort();
+  const selected = families.includes(selectedFamily) ? selectedFamily : '';
+  const visible = selected ? source.claims.filter(claim => claim.family === selected) : source.claims;
+  const filter = `<label for="claim-family-filter">Filter by source claim family</label><select id="claim-family-filter" aria-label="Filter claim families"><option value="">All supported families (${source.claims.length})</option>${families.map(family => `<option value="${esc(family)}" ${selected === family ? 'selected' : ''}>${esc(family)} (${source.claims.filter(claim => claim.family === family).length})</option>`).join('')}</select><p class="fine" role="status">Displaying ${visible.length} of ${source.claims.length} retained claims; filtering is local to this bounded read, not a source query.</p>`;
   const staleNotice = source.stale ? '<p class="fine stale-label"><strong>LAST KNOWN · STALE</strong> These retained claims are not a current Observation view.</p>' : '';
-  return panel(title, `${staleNotice}<p class="fine">These are separate owner claims from one bounded current view. They are not joined into a shared snapshot, and delivery order is not causal order.</p><div class="claim-grid">${source.claims.map(claimCard).join('')}</div>`, source.stale ? 'STALE · LAST KNOWN' : 'READ ONLY');
+  return panel(title, `${staleNotice}${title === 'Claim inspection' ? filter : ''}<p class="fine">These are separate owner claims from one bounded current view. They are not joined into a shared snapshot, and delivery order is not causal order.</p><div class="claim-grid">${visible.map(claimCard).join('')}</div>`, source.stale ? 'STALE · LAST KNOWN' : 'READ ONLY');
 }
 
 function coordinateMarker(claim, stale) {
@@ -164,7 +168,7 @@ function connectionState(source) {
   return labels[source.status] ?? ['UNKNOWN', 'Availability is not established.'];
 }
 
-export function renderScreen(route, source) {
+export function renderScreen(route, source, options = {}) {
   const claims = source.claims.length;
   switch (route.path) {
     case '/worlds':
@@ -187,7 +191,7 @@ export function renderScreen(route, source) {
     case '/sensorimotor':
       return `${panel('Source-asserted relations', note('No relation contract is available in M1', 'The two admitted claim families do not assert a sensorimotor relationship. No correlation or causal link is inferred from values, frames, identifiers, or delivery order.'), 'NO LINKS')}<div data-observation-region="claims">${claimsSection(source, {title: 'Unjoined source claims'})}</div>`;
     case '/claims':
-      return `<div data-observation-region="claims">${claimsSection(source, {title: 'Claim inspection', emptyTitle: 'No validated claim to inspect'})}</div>`;
+      return `<div data-observation-region="claims">${claimsSection(source, {title: 'Claim inspection', emptyTitle: 'No validated claim to inspect', selectedFamily: options.claimFamily ?? ''})}</div>`;
     case '/organism':
       return `${panel('Organism evidence', note('Organism-owned observation contract unavailable', 'The current authorized read adapter does not expose longitudinal cognitive, experiential, or executive state. Motion and weight changes cannot establish learning, intention, or cognition.'), 'NO ORGANISM CLAIMS')}<div data-observation-region="claims">${claimsSection(source, {title: 'Current publications · not organism cognition'})}</div>`;
     case '/research':
