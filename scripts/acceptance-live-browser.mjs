@@ -65,6 +65,8 @@ try {
   const requests = [];
   const responses = [];
   const consoleErrors = [];
+  let failNextArchiveReceiptRead = false;
+  let archiveFailureIntercepted = false;
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
     if (message.method === 'Network.requestWillBeSent') requests.push({requestId: message.params.requestId, url: message.params.request.url, method: message.params.request.method});
@@ -73,6 +75,18 @@ try {
     if (message.method === 'Network.loadingFailed') responses.push({requestId: message.params.requestId, failed: message.params.errorText});
     if (message.method === 'Runtime.exceptionThrown') consoleErrors.push(message.params.exceptionDetails?.text || 'uncaught browser exception');
     if (message.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(message.params.type)) consoleErrors.push(message.params.args.map(arg => arg.value || arg.description || '').join(' '));
+    if (message.method === 'Fetch.requestPaused') {
+      const {requestId, request} = message.params;
+      if (failNextArchiveReceiptRead && request.url.startsWith(origin + '/api/observation/archive/receipts')) {
+        failNextArchiveReceiptRead = false;
+        archiveFailureIntercepted = true;
+        const body = Buffer.from(JSON.stringify({error: 'archive_unavailable'})).toString('base64');
+        void send('Fetch.fulfillRequest', {requestId, responseCode: 503,
+          responseHeaders: [{name: 'Content-Type', value: 'application/json'}], body});
+      } else {
+        void send('Fetch.continueRequest', {requestId});
+      }
+    }
     if (!message.id) return;
     const waiter = pending.get(message.id);
     if (!waiter) return;
@@ -266,11 +280,22 @@ try {
       return {owner,family,revision};
     })()`);
     if (!filterState.owner || !filterState.family || !filterState.revision) throw new Error('Archive receipt card omitted supported filter fields');
+    failNextArchiveReceiptRead = true;
+    await send('Fetch.enable', {patterns: [{urlPattern: origin + '/api/observation/archive/receipts*', requestStage: 'Request'}]});
     await evaluate(`(() => {
       const form=document.querySelector('#archive-filter-form');
       form.elements.namedItem('owner').value=${JSON.stringify(filterState.owner)};
       form.elements.namedItem('family').value=${JSON.stringify(filterState.family)};
       form.elements.namedItem('revision').value=${JSON.stringify(filterState.revision)};
+      form.requestSubmit();
+    })()`);
+    const unavailableText = await waitFor("(() => { const result=document.querySelector('#archive-results')?.innerText||''; return result.includes('Archive read unavailable (503, archive_unavailable)') ? result : null; })()", 'explicit archive-unavailable state after injected 503');
+    if (!archiveFailureIntercepted || !unavailableText.includes('current-view data remains independent')) {
+      throw new Error('An unavailable archive receipt read was not rendered as an explicit, independent failure');
+    }
+    await send('Fetch.disable');
+    await evaluate(`(() => {
+      const form=document.querySelector('#archive-filter-form');
       form.requestSubmit();
     })()`);
     let filteredReadIssued = false;
@@ -312,6 +337,7 @@ try {
       coverage_inspected: true, filtered_results_rendered: true, keyboard_filter_submission: true,
       accessible_filter_names: ['Owner', 'Family', 'Revision', 'Apply filters'], same_origin_gets: capturedArchiveReads,
       bounded_coverage_copy: coverage.includes('not all World history'), receipt_next_page_exercised: receiptNextPageExercised,
+      injected_archive_unavailable_rendered: true,
       filtered_status: filteredReceipts.match(/[^\n]*/)?.[0]};
   }
   if (consoleErrors.length) throw new Error(`Browser reported errors or warnings: ${JSON.stringify(consoleErrors)}`);
