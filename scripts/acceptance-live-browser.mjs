@@ -271,9 +271,22 @@ try {
       await send('Runtime.releaseObjectGroup', {objectGroup: 'current-view-failure-notice'});
     }
     const statusNode = failureAx.nodes.find(node => node.role?.value === 'status');
-    const staleTextExposed = failureAx.nodes.some(node =>
-      `${node.name?.value || ''} ${node.value?.value || ''}`.includes('LAST KNOWN · STALE'));
-    if (!statusNode || !staleTextExposed) throw new Error(`Current-view ${name} notice was not exposed as a status live region containing the stale notice: ${JSON.stringify({nodes: failureAx.nodes.map(node => ({role: node.role?.value, name: node.name?.value, value: node.value?.value}))})}`);
+    const nodesById = new Map(failureAx.nodes.map(node => [node.nodeId, node]));
+    const descendantIds = new Set();
+    const collectDescendants = node => {
+      for (const childId of node.childIds || []) {
+        if (descendantIds.has(childId)) continue;
+        descendantIds.add(childId);
+        const child = nodesById.get(childId);
+        if (child) collectDescendants(child);
+      }
+    };
+    if (statusNode) collectDescendants(statusNode);
+    const noticeAxText = [...descendantIds].map(id => nodesById.get(id))
+      .filter(Boolean).map(node => `${node.name?.value || ''} ${node.value?.value || ''}`).join(' ');
+    const staleTextExposed = /last validated Observation snapshot is retained in memory/i.test(noticeAxText) &&
+      noticeAxText.includes(`later read failed (${unavailableStatus})`);
+    if (!statusNode || !staleTextExposed) throw new Error(`Current-view ${name} notice was not exposed as a status live region containing its stale diagnostic: ${JSON.stringify({noticeAxText, nodes: failureAx.nodes.map(node => ({id: node.nodeId, childIds: node.childIds, role: node.role?.value, name: node.name?.value, value: node.value?.value}))})}`);
     currentViewFailureAcceptance[name] = true;
   };
   await assertCurrentViewFailure({name: 'malformed', responseCode: 200, body: '{', unavailableStatus: 'error'});
