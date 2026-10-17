@@ -168,3 +168,52 @@ test('archive proxy forwards bounded GET without granting write or cross-origin 
   assert.equal((await fetch(base + '/api/observation/archive/receipts', {method:'POST'})).status, 405);
   assert.equal((await fetch(base + '/api/observation/archive/receipts', {headers:{Origin:'http://evil.invalid'}})).status, 403);
 });
+
+test('archive proxy forwards capture catalog and bounded coverage without causal joins', async t => {
+  const seen = [];
+  const upstream = createHttpServer((req, res) => {
+    seen.push(req.url);
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/v2/archive/captures') return res.end(JSON.stringify({
+      schema:'biopeia.observation.archive-http.v1',status:'results',
+      captures:[{capture_id:'capture-1',status:'closed_verified',initial_source_sequence:2,final_source_sequence:5}],
+    }));
+    if (req.url === '/v2/archive/coverage?capture_id=capture-1') return res.end(JSON.stringify({
+      schema:'biopeia.observation.archive-http.v1',status:'results',
+      coverage:{capture_id:'capture-1',status:'closed_verified',closure_verified:true,
+        complete:false,received_not_persisted:1,known_source_gaps:1,unverifiable_intervals:[[2,2],[4,null]],known_source_gaps:[[3,3,'source gap']],received_not_persisted:[[1,1,'write failed']]},
+    }));
+    res.writeHead(404);
+    res.end(JSON.stringify({status:'not_found'}));
+  });
+  const port = await listen(upstream);
+  const frontend = createFrontendServer({archiveUrl:`http://127.0.0.1:${port}`});
+  const frontendPort = await listen(frontend);
+  t.after(async () => { await close(frontend); await close(upstream); });
+  const base = `http://127.0.0.1:${frontendPort}/api/observation/archive`;
+  const captures = await fetch(base + '/captures');
+  assert.equal(captures.status, 200);
+  assert.equal((await captures.json()).captures[0].capture_id, 'capture-1');
+  const coverage = await fetch(base + '/coverage?capture_id=capture-1');
+  assert.equal(coverage.status, 200);
+  const value = await coverage.json();
+  assert.equal(value.coverage.complete, false);
+  assert.equal(Object.hasOwn(value, 'world_run_id'), false);
+  const missing = await fetch(base + '/coverage?capture_id=missing');
+  assert.equal(missing.status, 404);
+  assert.deepEqual(await missing.json(), {status:'not_found'});
+  assert.deepEqual(seen, ['/v2/archive/captures',
+    '/v2/archive/coverage?capture_id=capture-1', '/v2/archive/coverage?capture_id=missing']);
+});
+
+test('archive capture catalog fails closed when the adapter is unavailable', async t => {
+  const upstream = createHttpServer((_req, res) => res.end('{}'));
+  const port = await listen(upstream);
+  await close(upstream);
+  const frontend = createFrontendServer({archiveUrl:`http://127.0.0.1:${port}`});
+  t.after(() => close(frontend));
+  const frontendPort = await listen(frontend);
+  const response = await fetch(`http://127.0.0.1:${frontendPort}/api/observation/archive/captures`);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {error:'archive_unavailable'});
+});

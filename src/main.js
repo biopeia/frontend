@@ -110,6 +110,75 @@ function patchHtml(current, html) {
   patchChildren(current, template.content);
 }
 
+function archiveIntervals(value, withReason = false) {
+  if (!Array.isArray(value)) return 'not asserted';
+  if (value.length === 0) return 'none recorded';
+  if (!value.every(entry => Array.isArray(entry) && entry.length === (withReason ? 3 : 2) &&
+    Number.isSafeInteger(entry[0]) && entry[0] >= 0 &&
+    (entry[1] === null && !withReason || Number.isSafeInteger(entry[1]) && entry[1] >= entry[0]) &&
+    (!withReason || typeof entry[2] === 'string'))) return 'invalid interval data';
+  return value.map(entry => escapeHtml(entry[0]) + '–' +
+    (entry[1] === null ? 'open, unverified to present' : escapeHtml(entry[1])) +
+    (withReason ? ' (reason: ' + escapeHtml(entry[2]) + ')' : '')).join('; ');
+}
+async function archiveReadFailure(response, label) {
+  const failure = await response.json().catch(() => ({}));
+  const reason = typeof failure.status === 'string' ? failure.status :
+    typeof failure.error === 'string' ? failure.error : 'unknown';
+  return new Error(label + ' (' + response.status + ', ' + reason + ')');
+}
+let archiveCaptureCatalog = null;
+let archiveCoverage = null;
+let archiveMetadataToken = 0;
+let archiveCoverageToken = 0;
+async function readArchiveMetadata() {
+  const token = ++archiveMetadataToken;
+  const target = document.querySelector('#archive-metadata');
+  if (!target) return;
+  target.textContent = 'Reading local capture catalog…';
+  try {
+    const response = await fetch('/api/observation/archive/captures', {cache:'no-store',credentials:'same-origin'});
+    if (!response.ok) throw await archiveReadFailure(response, 'Capture catalog unavailable');
+    const catalog = await response.json();
+    if (catalog.schema !== 'biopeia.observation.archive-http.v1' || !Array.isArray(catalog.captures)) throw new Error('Unsupported capture catalog');
+    if (token !== archiveMetadataToken || !target.isConnected || getRoute().path !== '/archive-receipts') return;
+    archiveCaptureCatalog = catalog;
+    archiveCoverage = null;
+    target.innerHTML = '<p class="fine">Capture intervals are local Observation archive metadata, not complete World run history.</p>' +
+      '<p role="status">' + escapeHtml(catalog.status) + ' · ' + catalog.captures.length + ' captures</p>' +
+      '<div class="claim-grid">' + catalog.captures.map(s => '<article class="panel"><div class="panel-body"><strong>Capture ' + escapeHtml(s.capture_id) +
+      '</strong><p>Status: ' + escapeHtml(s.status) + '</p><p>Source sequence interval: ' +
+      escapeHtml(s.initial_source_sequence ?? 'not asserted') + ' – ' + escapeHtml(s.final_source_sequence ?? 'not asserted') +
+      '</p><button type="button" data-archive-coverage="' + escapeHtml(s.capture_id) + '">Inspect coverage for capture ' + escapeHtml(s.capture_id) + '</button></div></article>').join('') + '</div>' +
+      '<div id="archive-coverage" role="status">Select a capture to inspect bounded coverage.</div>';
+  } catch (error) {
+    if (token === archiveMetadataToken && target.isConnected && getRoute().path === '/archive-receipts') target.textContent = error.message;
+  }
+}
+async function readArchiveCoverage(captureId) {
+  const token = ++archiveCoverageToken;
+  const target = document.querySelector('#archive-coverage');
+  if (!target || !archiveCaptureCatalog?.captures.some(c => c.capture_id === captureId)) return;
+  target.textContent = 'Reading declared capture coverage…';
+  try {
+    const response = await fetch('/api/observation/archive/coverage?capture_id=' + encodeURIComponent(captureId), {cache:'no-store',credentials:'same-origin'});
+    if (!response.ok) throw await archiveReadFailure(response, 'Coverage unavailable');
+    const payload = await response.json();
+    if (payload.schema !== 'biopeia.observation.archive-http.v1' || !('coverage' in payload)) throw new Error('Unsupported coverage response');
+    if (token !== archiveCoverageToken || !target.isConnected || getRoute().path !== '/archive-receipts') return;
+    archiveCoverage = payload;
+    const coverage = payload.coverage;
+    target.innerHTML = coverage ? '<p><strong>Capture ' + escapeHtml(coverage.capture_id) + '</strong> · ' + escapeHtml(coverage.status) +
+      '</p><p>Closure verified: ' + escapeHtml(coverage.closure_verified) + ' · Declared interval complete: ' +
+      escapeHtml(coverage.complete) + '</p><p>Received not persisted: ' + archiveIntervals(coverage.received_not_persisted, true) +
+      ' · Known source gaps: ' + archiveIntervals(coverage.known_source_gaps, true) +
+      ' · Unverifiable intervals: ' + archiveIntervals(coverage.unverifiable_intervals) +
+      '</p><p class="fine">These flags concern only the declared capture interval, not all World history.</p>' :
+      '<p>Coverage not available for this capture. No completeness is inferred.</p>';
+  } catch (error) {
+    if (token === archiveCoverageToken && target.isConnected && getRoute().path === '/archive-receipts') target.textContent = error.message;
+  }
+}
 let archivePage = null;
 let archiveRequestToken = 0;
 async function readArchive(after = 0) {
@@ -157,7 +226,7 @@ function renderRoute(source = observationStore.getState()) {
     }
   });
   renderObservationScreen(route, source, {replaceRoute: true});
-  if (route.path === '/archive-receipts') void readArchive(0);
+  if (route.path === '/archive-receipts') { void readArchive(0); void readArchiveMetadata(); }
 }
 function renderObservationScreen(route, source, {replaceRoute = false} = {}) {
   const screen = document.querySelector('#observation-screen');
@@ -271,6 +340,8 @@ function mount() {
       document.getElementById('content').focus();
       return;
     }
+    const coverageButton = event.target.closest('[data-archive-coverage]');
+    if (coverageButton) { void readArchiveCoverage(coverageButton.getAttribute('data-archive-coverage')); return; }
     if (event.target.closest('#archive-next')) {
       if (archivePage?.has_more) void readArchive(archivePage.next_after_receipt_sequence);
       return;
