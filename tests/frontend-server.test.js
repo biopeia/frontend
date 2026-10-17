@@ -217,3 +217,30 @@ test('archive capture catalog fails closed when the adapter is unavailable', asy
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), {error:'archive_unavailable'});
 });
+
+test('archive proxy rejects oversized adapter responses and unexpected status codes', async t => {
+  let mode = 'oversized';
+  const upstream = createHttpServer((_req, res) => {
+    if (mode === 'oversized') {
+      res.writeHead(200, {'Content-Type':'application/json'});
+      return res.end('x'.repeat(1024 * 1024 + 1));
+    }
+    res.writeHead(302, {Location:'http://127.0.0.1:1/'});
+    res.end();
+  });
+  const port = await listen(upstream);
+  const frontend = createFrontendServer({archiveUrl:`http://127.0.0.1:${port}`});
+  const frontendPort = await listen(frontend);
+  t.after(async () => { await close(frontend); await close(upstream); });
+  const endpoint = `http://127.0.0.1:${frontendPort}/api/observation/archive/captures`;
+
+  const oversized = await fetch(endpoint);
+  assert.equal(oversized.status, 413);
+  assert.deepEqual(await oversized.json(), {error:'archive_response_too_large'});
+  assert.equal(oversized.headers.get('cache-control'), 'no-store');
+
+  mode = 'unexpected-status';
+  const redirected = await fetch(endpoint, {headers:{'Cache-Control':'no-cache'}});
+  assert.equal(redirected.status, 503);
+  assert.deepEqual(await redirected.json(), {error:'archive_unavailable'});
+});
