@@ -31,3 +31,8 @@ test('spatial selector has an explicitly associated accessible label',()=>{
  const source=readFileSync(new URL('../src/spatial-renderer.js',import.meta.url),'utf8');
  assert.match(source,/<label for="spatial-item-selection">Select an authored geometry item<\/label><select id="spatial-item-selection">/);
 });
+
+test('spatial disclosure summaries let provenance badges wrap on narrow screens',()=>{
+ assert.match(css,/@media\(max-width:690px\)\{[^}]*\.spatial-inspector>summary,\.spatial-diagnostics>summary\{[^}]*flex-wrap:wrap/);
+ assert.match(css,/\.spatial-inspector>summary \.small-tag,\.spatial-diagnostics>summary \.small-tag\{[^}]*white-space:normal/);
+});
