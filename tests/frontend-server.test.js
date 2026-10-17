@@ -152,7 +152,7 @@ test('archive adapter URL rejects non-loopback and credentialed origins', () => 
 test('archive proxy forwards bounded GET without granting write or cross-origin access', async t => {
   const upstream = createHttpServer((req, res) => {
     assert.equal(req.method, 'GET');
-    assert.equal(req.url, '/v2/archive/receipts?limit=1');
+    assert.equal(req.url, '/v2/archive/receipts?limit=1&after=25&owner=embodiment&family=embodiment.body_pose&revision=v1');
     assert.equal(req.headers.origin, undefined);
     res.writeHead(200, {'Content-Type':'application/json'});
     res.end('{"schema":"biopeia.observation.archive-http.v1","status":"results","receipts":[],"has_more":false,"next_after_receipt_sequence":0}');
@@ -162,7 +162,7 @@ test('archive proxy forwards bounded GET without granting write or cross-origin 
   const frontendPort = await listen(frontend);
   t.after(async () => {await close(frontend); await close(upstream);});
   const base = `http://127.0.0.1:${frontendPort}`;
-  const ok = await fetch(base + '/api/observation/archive/receipts?limit=1');
+  const ok = await fetch(base + '/api/observation/archive/receipts?limit=1&after=25&owner=embodiment&family=embodiment.body_pose&revision=v1');
   assert.equal(ok.status, 200);
   assert.equal((await ok.json()).schema, 'biopeia.observation.archive-http.v1');
   assert.equal((await fetch(base + '/api/observation/archive/receipts', {method:'POST'})).status, 405);

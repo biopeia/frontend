@@ -1,4 +1,5 @@
 import {archiveIntervals} from './archive-intervals.js';
+import {archiveReceiptsUrl} from './archive-receipts.js';
 import {fetchCurrentObservation, ObservationReadError} from './observation-client.js';
 import {createSnapshotRefresh} from './snapshot-refresh.js';
 import {createObservationStore} from './observation-store.js';
@@ -171,13 +172,19 @@ async function readArchiveCoverage(captureId) {
 }
 let archivePage = null;
 let archiveRequestToken = 0;
+let archiveFilters = {owner:'', family:'', revision:''};
+function archiveFilterForm() {
+  return `<form id="archive-filter-form" role="search" aria-label="Filter archive receipts"><label>Owner <input name="owner" maxlength="256" value="${escapeHtml(archiveFilters.owner)}"></label><label>Family <input name="family" maxlength="256" value="${escapeHtml(archiveFilters.family)}"></label><label>Revision <input name="revision" maxlength="256" value="${escapeHtml(archiveFilters.revision)}"></label><button type="submit">Apply filters</button></form><div id="archive-results" aria-live="polite"></div>`;
+}
 async function readArchive(after = 0) {
   const token = ++archiveRequestToken;
   const target = document.querySelector('#archive-history');
   if (!target) return;
-  target.textContent = 'Reading bounded local archive receipts…';
+  target.innerHTML = archiveFilterForm();
+  const results = target.querySelector('#archive-results');
+  results.textContent = 'Reading bounded local archive receipts…';
   try {
-    const response = await fetch('/api/observation/archive/receipts?limit=25&after=' + after, {cache:'no-store',credentials:'same-origin'});
+    const response = await fetch(archiveReceiptsUrl(after, archiveFilters), {cache:'no-store',credentials:'same-origin'});
     if (!response.ok) {
       const failure = await response.json().catch(() => ({}));
       const reason = typeof failure.status === 'string' ? failure.status : typeof failure.error === 'string' ? failure.error : 'archive_unavailable';
@@ -188,7 +195,7 @@ async function readArchive(after = 0) {
         typeof payload.has_more !== 'boolean' || !Number.isSafeInteger(payload.next_after_receipt_sequence)) throw new Error('Unsupported archive response');
     if (token !== archiveRequestToken || !target.isConnected || getRoute().path !== '/archive-receipts') return;
     archivePage = payload;
-    target.innerHTML = '<p class="fine">Local receipt order only; not World causal time or proof of complete history. No World/run join is inferred.</p>' +
+    results.innerHTML = '<p class="fine">Local receipt order only; not World causal time or proof of complete history. No World/run join is inferred.</p>' +
       '<p role="status">' + escapeHtml(payload.status) + ' · ' + payload.receipts.length + ' receipts in this page</p>' +
       '<div class="claim-grid">' + payload.receipts.map(r => '<article class="panel"><div class="panel-body">' +
         '<strong>' + escapeHtml(r.family) + '</strong><p>Authority: ' + escapeHtml(r.authority) +
@@ -199,7 +206,7 @@ async function readArchive(after = 0) {
       (payload.has_more ? '<button type="button" id="archive-next">Next receipt page</button>' : '<p class="fine">No further receipts in this bounded query; this does not establish complete source history.</p>');
   } catch (error) {
     if (token === archiveRequestToken && target.isConnected && getRoute().path === '/archive-receipts') {
-      target.textContent = error.message + '. The current-view data remains independent.';
+      results.textContent = error.message + '. The current-view data remains independent.';
     }
   }
 }
@@ -312,6 +319,13 @@ const observationStore = createObservationStore({initialState: initialSource});
 function mount() {
   if (shellMounted) return;
   renderShell(observationStore.getState());
+  app.addEventListener('submit', event => {
+    if (!event.target.matches('#archive-filter-form')) return;
+    event.preventDefault();
+    const values = new FormData(event.target);
+    archiveFilters = {owner:String(values.get('owner') ?? '').trim(), family:String(values.get('family') ?? '').trim(), revision:String(values.get('revision') ?? '').trim()};
+    void readArchive(0);
+  });
   app.addEventListener('change', event => {
     if (event.target?.id !== 'claim-family-filter') return;
     selectedClaimFamily = event.target.value;
