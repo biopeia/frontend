@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, readFile, rename, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -167,7 +167,10 @@ try {
     if (!pageAttachedAt && preWorld503) {
       pageAttachedAt = new Date().toISOString();
       if (process.env.BROWSER_READY_PATH) {
-        await writeFile(process.env.BROWSER_READY_PATH, JSON.stringify({browser_page_attached_at_utc: pageAttachedAt, pre_world_unavailable_read: true}), {flag: 'wx'});
+        const readyPath = process.env.BROWSER_READY_PATH;
+        const temporaryReadyPath = `${readyPath}.${process.pid}.tmp`;
+        await writeFile(temporaryReadyPath, JSON.stringify({browser_page_attached_at_utc: pageAttachedAt, pre_world_unavailable_read: true}), {flag: 'wx'});
+        await rename(temporaryReadyPath, readyPath);
       }
     }
     if (lastStatus.includes('Current view available')) { connectedAt = new Date().toISOString(); break; }
@@ -266,6 +269,44 @@ try {
   const initialAxLabels = initialAx.nodes.map(node => node.name?.value).filter(Boolean);
   for (const label of ['Skip to main content', 'Toggle navigation', 'Refresh current Observation snapshot']) {
     if (!initialAxLabels.includes(label)) throw new Error(`Browser accessibility tree omitted the accessible name ${JSON.stringify(label)}; observed ${JSON.stringify(initialAxLabels)}`);
+  }
+  const pressKey = async (key, code, windowsVirtualKeyCode) => {
+    await send('Input.dispatchKeyEvent', {type:'keyDown', key, code, windowsVirtualKeyCode});
+    await send('Input.dispatchKeyEvent', {type:'keyUp', key, code, windowsVirtualKeyCode});
+  };
+  await evaluate('document.activeElement instanceof HTMLElement && document.activeElement.blur()');
+  await pressKey('Tab', 'Tab', 9);
+  const skipLinkFocus = await evaluate(`(() => ({text:document.activeElement.innerText.trim(), outline:getComputedStyle(document.activeElement).outlineWidth}))()`);
+  if (skipLinkFocus.text !== 'Skip to main content' || skipLinkFocus.outline === '0px') {
+    throw new Error(`Keyboard focus did not expose the skip link: ${JSON.stringify(skipLinkFocus)}`);
+  }
+  await pressKey('Enter', 'Enter', 13);
+  const skipTarget = await evaluate(`({hash:location.hash, activeId:document.activeElement.id})`);
+  if (skipTarget.hash !== '#content' || skipTarget.activeId !== 'content') {
+    throw new Error(`Keyboard skip link did not focus main content: ${JSON.stringify(skipTarget)}`);
+  }
+  await send('Page.navigate', {url: origin + '/overview'});
+  let mobileRouteReady = false;
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    mobileRouteReady = await evaluate("Boolean(document.querySelector('#menu') && document.querySelector('#page-title')?.innerText === 'World Overview')");
+    if (mobileRouteReady) break;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  if (!mobileRouteReady) throw new Error('Mobile navigation route did not finish rendering after the skip-link check');
+  await evaluate('document.activeElement instanceof HTMLElement && document.activeElement.blur()');
+  await pressKey('Tab', 'Tab', 9);
+  await pressKey('Tab', 'Tab', 9);
+  const menuFocused = await evaluate(`document.activeElement.id === 'menu'`);
+  if (!menuFocused) throw new Error('Mobile navigation toggle was not next in keyboard focus order after main content');
+  await pressKey(' ', 'Space', 32);
+  const mobileMenuOpened = await evaluate(`(() => ({expanded:document.querySelector('#menu')?.getAttribute('aria-expanded'), visible:getComputedStyle(document.querySelector('.sidebar')).display, links:document.querySelectorAll('.sidebar nav a').length}))()`);
+  if (mobileMenuOpened.expanded !== 'true' || mobileMenuOpened.visible === 'none' || mobileMenuOpened.links !== 9) {
+    throw new Error(`Keyboard did not open the complete mobile navigation: ${JSON.stringify(mobileMenuOpened)}`);
+  }
+  await pressKey(' ', 'Space', 32);
+  const mobileMenuClosed = await evaluate(`({expanded:document.querySelector('#menu')?.getAttribute('aria-expanded'), visible:getComputedStyle(document.querySelector('.sidebar')).display})`);
+  if (mobileMenuClosed.expanded !== 'false' || mobileMenuClosed.visible !== 'none') {
+    throw new Error(`Keyboard did not close the mobile navigation: ${JSON.stringify(mobileMenuClosed)}`);
   }
   await send('Emulation.clearDeviceMetricsOverride');
   const currentViewFailureAcceptance = {};
@@ -511,6 +552,7 @@ try {
     snapshots, polls, approved_claim_families: allowedFamilies,
     read_requests: apiReads, non_same_origin_requests: foreign, read_only_gets: true,
     current_view_failure_acceptance: currentViewFailureAcceptance, current_view_recovered: currentViewRecovered,
+    keyboard_navigation_acceptance: {skip_link_focus_and_activation: true, mobile_menu_space_toggle: true},
     archive_acceptance: archiveResult,
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));
 } finally {
