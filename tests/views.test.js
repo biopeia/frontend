@@ -200,3 +200,11 @@ test('archive receipts route is canonical and does not masquerade as causal time
   assert.match(html, /NOT CAUSAL/);
   assert.doesNotMatch(html, /Inspect committed World cuts/);
 });
+
+test('archive view exposes bounded capture metadata and receipts separately', () => {
+  const route = ROUTES.find(route => route.path === '/archive-receipts');
+  const html = renderScreen(route, initialSource);
+  assert.match(html, /id="archive-metadata"/);
+  assert.match(html, /id="archive-history"/);
+  assert.match(html, /NOT CAUSAL/);
+});
