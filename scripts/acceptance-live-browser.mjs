@@ -266,7 +266,7 @@ try {
     if (!noticeObjectId) throw new Error('Current-view notice element is missing from the browser DOM');
     let failureAx;
     try {
-      failureAx = await send('Accessibility.getPartialAXTree', {objectId: noticeObjectId, fetchRelatives: false});
+      failureAx = await send('Accessibility.getPartialAXTree', {objectId: noticeObjectId, fetchRelatives: true});
     } finally {
       await send('Runtime.releaseObjectGroup', {objectGroup: 'current-view-failure-notice'});
     }
