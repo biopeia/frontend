@@ -265,12 +265,14 @@ try {
     const noticeObjectId = noticeObject.result?.objectId;
     if (!noticeObjectId) throw new Error('Current-view notice element is missing from the browser DOM');
     let failureAx;
+    const noticeDescription = await send('DOM.describeNode', {objectId: noticeObjectId});
+    const noticeBackendNodeId = noticeDescription.node?.backendNodeId;
     try {
       failureAx = await send('Accessibility.getPartialAXTree', {objectId: noticeObjectId, fetchRelatives: true});
     } finally {
       await send('Runtime.releaseObjectGroup', {objectGroup: 'current-view-failure-notice'});
     }
-    const statusNode = failureAx.nodes.find(node => node.role?.value === 'status');
+    const noticeAxNode = failureAx.nodes.find(node => node.backendDOMNodeId === noticeBackendNodeId);
     const nodesById = new Map(failureAx.nodes.map(node => [node.nodeId, node]));
     const descendantIds = new Set();
     const collectDescendants = node => {
@@ -281,12 +283,12 @@ try {
         if (child) collectDescendants(child);
       }
     };
-    if (statusNode) collectDescendants(statusNode);
+    if (noticeAxNode) collectDescendants(noticeAxNode);
     const noticeAxText = [...descendantIds].map(id => nodesById.get(id))
       .filter(Boolean).map(node => `${node.name?.value || ''} ${node.value?.value || ''}`).join(' ');
     const staleTextExposed = /last validated Observation snapshot is retained in memory/i.test(noticeAxText) &&
       noticeAxText.includes(`later read failed (${unavailableStatus})`);
-    if (!statusNode || !staleTextExposed) throw new Error(`Current-view ${name} notice was not exposed as a status live region containing its stale diagnostic: ${JSON.stringify({noticeAxText, nodes: failureAx.nodes.map(node => ({id: node.nodeId, childIds: node.childIds, role: node.role?.value, name: node.name?.value, value: node.value?.value}))})}`);
+    if (noticeAxNode?.role?.value !== 'status' || !staleTextExposed) throw new Error(`Current-view ${name} notice was not exposed as a status live region containing its stale diagnostic: ${JSON.stringify({targetRole: noticeAxNode?.role?.value, noticeAxText, nodes: failureAx.nodes.map(node => ({id: node.nodeId, backendDOMNodeId: node.backendDOMNodeId, childIds: node.childIds, role: node.role?.value, name: node.name?.value, value: node.value?.value}))})}`);
     currentViewFailureAcceptance[name] = true;
   };
   await assertCurrentViewFailure({name: 'malformed', responseCode: 200, body: '{', unavailableStatus: 'error'});
