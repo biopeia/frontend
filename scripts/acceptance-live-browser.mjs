@@ -285,6 +285,10 @@ try {
   if (skipTarget.hash !== '#content' || skipTarget.activeId !== 'content') {
     throw new Error(`Keyboard skip link did not focus main content: ${JSON.stringify(skipTarget)}`);
   }
+  await send('Page.navigate', {url: origin + '/overview'});
+  await waitFor("document.querySelector('#menu') && document.querySelector('#page-title')?.innerText === 'World Overview'", 'mobile navigation after skip-link check');
+  await evaluate('document.activeElement instanceof HTMLElement && document.activeElement.blur()');
+  await pressKey('Tab', 'Tab', 9);
   await pressKey('Tab', 'Tab', 9);
   const menuFocused = await evaluate(`document.activeElement.id === 'menu'`);
   if (!menuFocused) throw new Error('Mobile navigation toggle was not next in keyboard focus order after main content');
