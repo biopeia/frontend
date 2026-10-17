@@ -4,7 +4,7 @@ export const ROUTES = Object.freeze([
   {path:'/worlds', label:'Worlds & Runs', title:'Worlds & Runs', intro:'Discover Worlds and run contexts made available by an authorized publication source.'},
   {path:'/overview', label:'World Overview', title:'World Overview', intro:'Inspect committed World context and compatible published spatial evidence.'},
   {path:'/spatial', label:'Spatial Explorer', title:'Spatial Explorer', intro:'Explore spatial claims only where geometry, units and frames are source-backed.'},
-  {path:'/timeline', label:'Causal Timeline', title:'Causal Timeline', intro:'Inspect committed World cuts separately from publication and delivery status.'},
+  {path:'/timeline', label:'Archive Receipts', title:'Archive Receipts', intro:'Inspect locally archived Observation receipts in receipt order; World causal history is not established.'},
   {path:'/sensorimotor', label:'Sensorimotor Trace', title:'Sensorimotor Trace', intro:'Follow only explicit source-published sensorimotor relations.'},
   {path:'/claims', label:'Claim Inspector', title:'Claim Inspector', intro:'Examine the authority, time, revision, provenance and scope of published claims.'},
   {path:'/research', label:'Research Evidence', title:'Research Evidence', intro:'Inspect scientific admission boundaries without inferring conclusions from runtime observations.'},
