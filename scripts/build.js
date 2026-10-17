@@ -1,6 +1,6 @@
-import {mkdir,readFile,writeFile,copyFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,copyFile,rm} from 'node:fs/promises';
 import {join} from 'node:path';
-const out='dist';await mkdir(join(out,'assets'),{recursive:true});
+const out='dist';await rm(out,{recursive:true,force:true});await mkdir(join(out,'assets'),{recursive:true});
 let html=await readFile('index.html','utf8');
 html=html.replace('<script type="module" src="/src/main.js"></script>','<link rel="stylesheet" href="/assets/style.css"><script type="module" src="/assets/main.js"></script>');
 await writeFile(join(out,'index.html'),html);
