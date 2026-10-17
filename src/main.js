@@ -316,8 +316,7 @@ function mount() {
     if (event.target?.id !== 'claim-family-filter') return;
     selectedClaimFamily = event.target.value;
     const route = getRoute();
-    if (route.path === '/archive-receipts') return;
-    renderRoute();
+    renderObservationScreen(route, observationStore.getState());
   });
   app.addEventListener('click', event => {
     const navLink = event.target.closest('a[data-nav]');
