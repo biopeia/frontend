@@ -36,3 +36,8 @@ test('spatial disclosure summaries let provenance badges wrap on narrow screens'
  assert.match(css,/@media\(max-width:690px\)\{[^}]*\.spatial-inspector>summary,\.spatial-diagnostics>summary\{[^}]*flex-wrap:wrap/);
  assert.match(css,/\.spatial-inspector>summary \.small-tag,\.spatial-diagnostics>summary \.small-tag\{[^}]*white-space:normal/);
 });
+
+test('reduced-motion preference disables smooth scrolling, animation, and transitions',()=>{
+ assert.match(css,/@media\(prefers-reduced-motion:\s*reduce\)\s*\{html\s*\{scroll-behavior:\s*auto/);
+ assert.match(css,/\*,\*:before,\*:after\{animation:\s*none\s*!important;transition:\s*none\s*!important\}/);
+});

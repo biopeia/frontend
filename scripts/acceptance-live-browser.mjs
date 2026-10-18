@@ -578,6 +578,25 @@ try {
     }
   }
   await evaluate(`document.querySelector('.sidebar nav a[data-nav][href=${JSON.stringify(responsiveRouteBefore)}]')?.click()`);
+  await send('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion', value:'reduce'}]});
+  const reducedMotion = await evaluate(`(() => {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'animation: reduced-motion-probe 10s linear infinite; transition: opacity 10s linear';
+    document.body.append(probe);
+    const result = {
+      preference: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      scroll_behavior: getComputedStyle(document.documentElement).scrollBehavior,
+      animation_duration: getComputedStyle(probe).animationDuration,
+      transition_duration: getComputedStyle(probe).transitionDuration
+    };
+    probe.remove();
+    return result;
+  })()`);
+  if (!reducedMotion.preference || reducedMotion.scroll_behavior !== 'auto' ||
+      reducedMotion.animation_duration !== '0s' || reducedMotion.transition_duration !== '0s') {
+    throw new Error(`Reduced-motion preference was not respected: ${JSON.stringify(reducedMotion)}`);
+  }
+  await send('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion', value:'no-preference'}]});
   await send('Emulation.setDeviceMetricsOverride', {width:375, height:812, deviceScaleFactor:1, mobile:true});
   const responsiveForeign = requests.filter(request => new URL(request.url).origin !== origin);
   if (responsiveForeign.length) throw new Error(`Responsive route acceptance contacted a non-same-origin URL: ${JSON.stringify(responsiveForeign)}`);
@@ -594,6 +613,7 @@ try {
     current_view_failure_acceptance: currentViewFailureAcceptance, current_view_recovered: currentViewRecovered,
     keyboard_navigation_acceptance: {skip_link_focus_and_activation: true, mobile_menu_space_toggle: true},
     responsive_reflow_acceptance: responsiveReflow,
+    reduced_motion_acceptance: reducedMotion,
     archive_acceptance: archiveResult,
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));
 } finally {
