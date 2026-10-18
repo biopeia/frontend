@@ -439,6 +439,40 @@ try {
     const filterBefore = archiveReads().length;
     const metadataReadsBeforeFilter = archiveReads().filter(request => request.url.endsWith('/captures')).length;
     const coverageBeforeFilter = await evaluate("document.querySelector('#archive-coverage')?.innerText || ''");
+    const archiveReadsBeforeClaimFilter = archiveReads().length;
+    const claimCardsBeforeFilter = await evaluate("document.querySelectorAll('[data-observation-region=\"claims\"] .claim-card').length");
+    const claimFilterOption = await evaluate(`(() => {
+      const select=document.querySelector('#claim-family-filter');
+      const option=[...(select?.options||[])].find(item=>item.value==='embodiment.body_pose');
+      return option?{value:option.value,label:option.textContent}:null;
+    })()`);
+    if (!claimFilterOption) throw new Error('Archive route omitted the supported current-claim family filter option');
+    const expectedVisibleClaims = Number(claimFilterOption.label.match(/\((\d+)\)$/)?.[1]);
+    if (!Number.isSafeInteger(expectedVisibleClaims) || expectedVisibleClaims < 1) {
+      throw new Error(`Current-claim filter option omitted its source-backed count: ${JSON.stringify(claimFilterOption)}`);
+    }
+    if (claimCardsBeforeFilter === expectedVisibleClaims) {
+      throw new Error(`Current-claim filter fixture does not prove a rendered-card change: before=${claimCardsBeforeFilter}, selected=${expectedVisibleClaims}`);
+    }
+    await evaluate(`(() => {
+      const select=document.querySelector('#claim-family-filter');
+      select.value=${JSON.stringify(claimFilterOption.value)};
+      select.dispatchEvent(new Event('change',{bubbles:true}));
+    })()`);
+    const claimFilterState = await waitFor(`(() => {
+      const select=document.querySelector('#claim-family-filter');
+      const status=[...document.querySelectorAll('[data-observation-region="claims"] [role="status"]')]
+        .find(node=>node.innerText.includes('Displaying '))?.innerText||'';
+      const visibleCardCount=document.querySelectorAll('[data-observation-region="claims"] .claim-card').length;
+      return select?.value===${JSON.stringify(claimFilterOption.value)} && visibleCardCount===${expectedVisibleClaims} &&
+        status.includes('Displaying ${expectedVisibleClaims} of ')
+        ? {selectedFamily:select.value,visibleCardCount,status} : null;
+    })()`, 'local current-claim filter result');
+    const claimFilterStatus = claimFilterState.status;
+    const coverageAfterClaimFilter = await evaluate("document.querySelector('#archive-coverage')?.innerText || ''");
+    if (!coverageBeforeFilter || coverageAfterClaimFilter !== coverageBeforeFilter || archiveReads().length !== archiveReadsBeforeClaimFilter) {
+      throw new Error(`Changing the local current-claim filter disturbed archive coverage or issued archive reads: ${JSON.stringify({coverageBeforeFilter,coverageAfterClaimFilter,archiveReadsDelta:archiveReads().length-archiveReadsBeforeClaimFilter})}`);
+    }
     const filterState = await evaluate(`(() => {
       const card=document.querySelector('#archive-results .panel');
       const text=card?.innerText||'';
@@ -532,6 +566,8 @@ try {
     if (archiveForeign.length) throw new Error(`Archive browser contacted a non-same-origin URL: ${JSON.stringify(archiveForeign)}`);
     archiveResult = {capture_count: captureButtons.length, initial_receipt_count: receiptCards.length,
       coverage_inspected: true, filtered_results_rendered: true, keyboard_filter_submission: true,
+      current_claim_filter_preserved_coverage: true, current_claim_filter_archive_reads_delta: 0,
+      current_claim_filter_status: claimFilterStatus,
       accessible_filter_names: ['Owner', 'Family', 'Revision', 'Apply filters'], same_origin_gets: capturedArchiveReads,
       bounded_coverage_copy: coverage.includes('not all World history'), receipt_next_page_exercised: receiptNextPageExercised,
       injected_partial_archive_response_rejected: true,
