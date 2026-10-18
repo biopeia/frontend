@@ -577,6 +577,22 @@ try {
       await evaluate("document.querySelector('.spatial-inspector').open = false");
     }
   }
+  // A 640 CSS-pixel viewport is equivalent to a 200% zoom reflow check from
+  // a nominal 1280 CSS-pixel desktop viewport. This is a viewport emulation,
+  // not direct browser page-zoom emulation; keep the distinction explicit.
+  await send('Emulation.setDeviceMetricsOverride', {width:640, height:812, deviceScaleFactor:1, mobile:true});
+  for (const path of responsivePaths) {
+    await evaluate(`document.querySelector('.sidebar nav a[data-nav][href=${JSON.stringify(path)}]')?.click()`);
+    if (await evaluate('location.pathname') !== path) throw new Error(`200%-equivalent route navigation did not reach ${path}`);
+    await readReflow('200%-equivalent-640px-route');
+    if (path === '/spatial') {
+      await evaluate("document.querySelector('.spatial-inspector').open = false");
+      await readReflow('200%-equivalent-640px-spatial-disclosure-closed');
+      await evaluate("document.querySelector('.spatial-inspector').open = true");
+      await readReflow('200%-equivalent-640px-spatial-disclosure-open');
+      await evaluate("document.querySelector('.spatial-inspector').open = false");
+    }
+  }
   await evaluate(`document.querySelector('.sidebar nav a[data-nav][href=${JSON.stringify(responsiveRouteBefore)}]')?.click()`);
   await send('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion', value:'reduce'}]});
   const reducedMotion = await evaluate(`(() => {
@@ -613,6 +629,8 @@ try {
     current_view_failure_acceptance: currentViewFailureAcceptance, current_view_recovered: currentViewRecovered,
     keyboard_navigation_acceptance: {skip_link_focus_and_activation: true, mobile_menu_space_toggle: true},
     responsive_reflow_acceptance: responsiveReflow,
+    reflow_200_percent_equivalent: {viewport_width_css_px:640, nominal_unzoomed_width_css_px:1280,
+      method:'viewport emulation; browser page zoom is not directly emulated'},
     reduced_motion_acceptance: reducedMotion,
     archive_acceptance: archiveResult,
     screenshot_sha256: screenshotSha256, console_errors_and_warnings: consoleErrors}));
